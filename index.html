@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ShardKey - 答题解锁秘密</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>ShardKey</h1>
+            <p>通过回答问题解锁秘密的门限共享工具</p>
+        </header>
+
+        <!-- 标签切换 -->
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="create">创建挑战</button>
+            <button class="tab-btn" data-tab="solve">求解挑战</button>
+        </div>
+
+        <!-- ==================== 创建面板 ==================== -->
+        <div id="panel-create" class="panel active">
+            <!-- 秘密输入 -->
+            <div class="card">
+                <h2>设置秘密</h2>
+                <div class="form-group">
+                    <label for="secret-input">要分享的秘密</label>
+                    <textarea id="secret-input" placeholder="输入你的秘密，例如手机号、密码、一段话..."></textarea>
+                    <div class="form-hint">支持中文、英文、数字和符号。秘密将被加密，只有正确回答足够多的问题才能恢复。</div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="challenge-title">挑战标题（可选）</label>
+                        <input type="text" id="challenge-title" placeholder="例如：获取我的手机号">
+                    </div>
+                    <div class="form-group">
+                        <label for="challenge-desc">挑战描述（可选）</label>
+                        <input type="text" id="challenge-desc" placeholder="例如：回答问题获取秘密">
+                    </div>
+                </div>
+            </div>
+
+            <!-- 问题列表 -->
+            <div class="card">
+                <h2>设置问题</h2>
+                <div id="question-list">
+                    <!-- 动态生成 -->
+                </div>
+                <button class="btn btn-secondary" id="btn-add-question">+ 添加问题</button>
+            </div>
+
+            <!-- 门限设置 -->
+            <div class="card">
+                <h2>门限设置</h2>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="threshold-input">门限值</label>
+                        <input type="number" id="threshold-input" min="2" value="3">
+                        <div class="form-hint">需要正确回答的最少问题数。值越大越安全，但也要求回答者知道更多答案。</div>
+                    </div>
+                    <div class="form-group">
+                        <label>问题总数</label>
+                        <input type="text" id="question-count-display" disabled value="0">
+                    </div>
+                </div>
+            </div>
+
+            <!-- 生成按钮 -->
+            <div class="card">
+                <button class="btn btn-primary btn-block" id="btn-generate">生成挑战</button>
+                <div id="generate-progress" class="hidden">
+                    <div class="progress-bar"><div class="fill" id="progress-fill"></div></div>
+                    <div class="progress-text" id="progress-text"></div>
+                </div>
+                <div id="generate-result" class="hidden"></div>
+            </div>
+        </div>
+
+        <!-- ==================== 求解面板 ==================== -->
+        <div id="panel-solve" class="panel">
+            <!-- 加载挑战 -->
+            <div class="card" id="solve-load-card">
+                <h2>加载挑战</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 12px; font-size: 0.9em;">
+                    通过链接自动加载，或手动导入挑战文件。
+                </p>
+                <div class="btn-group">
+                    <div class="file-input-wrapper">
+                        <button class="btn btn-secondary">从文件导入</button>
+                        <input type="file" id="file-import" accept=".json">
+                    </div>
+                    <button class="btn btn-secondary" id="btn-paste-link">粘贴链接</button>
+                </div>
+                <div id="paste-link-area" class="hidden" style="margin-top: 12px;">
+                    <textarea id="paste-link-input" placeholder="粘贴包含挑战数据的链接..." style="min-height: 50px;"></textarea>
+                    <button class="btn btn-primary" id="btn-load-link" style="margin-top: 8px;">加载</button>
+                </div>
+            </div>
+
+            <!-- 挑战信息和问题（加载后显示） -->
+            <div id="solve-content" class="hidden">
+                <div class="card">
+                    <div class="challenge-info">
+                        <div class="info-title" id="solve-title"></div>
+                        <div class="info-desc" id="solve-desc"></div>
+                        <div class="info-meta" id="solve-meta"></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>回答问题</h2>
+                    <div id="solve-questions">
+                        <!-- 动态生成 -->
+                    </div>
+                    <button class="btn btn-success btn-block" id="btn-solve">解锁秘密</button>
+                    <div id="solve-result" class="hidden"></div>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            ShardKey · 中国剩余定理 + Mignotte 门限方案
+        </footer>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>

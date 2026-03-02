@@ -1,0 +1,472 @@
+/* style.css — 响应式设计 */
+
+:root {
+    --bg: #f5f5f5;
+    --surface: #ffffff;
+    --text: #1a1a1a;
+    --text-secondary: #666666;
+    --primary: #2563eb;
+    --primary-hover: #1d4ed8;
+    --success: #16a34a;
+    --error: #dc2626;
+    --warning: #d97706;
+    --border: #e5e7eb;
+    --border-focus: #2563eb;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.1);
+    --radius: 8px;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans SC', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    min-height: 100vh;
+}
+
+.container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+/* 头部 */
+header {
+    text-align: center;
+    padding: 30px 0 20px;
+}
+
+header h1 {
+    font-size: 1.8em;
+    font-weight: 700;
+    margin-bottom: 6px;
+}
+
+header p {
+    color: var(--text-secondary);
+    font-size: 0.95em;
+}
+
+/* 标签切换 */
+.tabs {
+    display: flex;
+    background: var(--surface);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    margin-bottom: 24px;
+    overflow: hidden;
+}
+
+.tab-btn {
+    flex: 1;
+    padding: 14px 20px;
+    border: none;
+    background: transparent;
+    font-size: 1em;
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+}
+
+.tab-btn:hover {
+    color: var(--text);
+    background: rgba(37, 99, 235, 0.04);
+}
+
+.tab-btn.active {
+    color: var(--primary);
+    background: rgba(37, 99, 235, 0.08);
+}
+
+.tab-btn.active::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 10%;
+    width: 80%;
+    height: 3px;
+    background: var(--primary);
+    border-radius: 3px 3px 0 0;
+}
+
+/* 面板 */
+.panel {
+    display: none;
+}
+
+.panel.active {
+    display: block;
+}
+
+/* 卡片 */
+.card {
+    background: var(--surface);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 24px;
+    margin-bottom: 16px;
+}
+
+.card h2 {
+    font-size: 1.2em;
+    margin-bottom: 16px;
+    font-weight: 600;
+}
+
+.card h3 {
+    font-size: 1.05em;
+    margin-bottom: 12px;
+    font-weight: 600;
+}
+
+/* 表单元素 */
+label {
+    display: block;
+    font-weight: 500;
+    margin-bottom: 6px;
+    font-size: 0.9em;
+}
+
+input[type="text"],
+input[type="number"],
+input[type="password"],
+textarea {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.95em;
+    font-family: inherit;
+    transition: border-color 0.2s;
+    background: var(--surface);
+    color: var(--text);
+}
+
+input:focus,
+textarea:focus {
+    outline: none;
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+textarea {
+    resize: vertical;
+    min-height: 80px;
+}
+
+.form-group {
+    margin-bottom: 16px;
+}
+
+.form-row {
+    display: flex;
+    gap: 12px;
+}
+
+.form-row .form-group {
+    flex: 1;
+}
+
+.form-hint {
+    font-size: 0.82em;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+
+/* 问题列表 */
+.question-item {
+    background: var(--bg);
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 12px;
+    position: relative;
+}
+
+.question-item .question-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.question-item .question-number {
+    font-weight: 600;
+    color: var(--primary);
+    font-size: 0.9em;
+}
+
+.btn-remove {
+    background: none;
+    border: none;
+    color: var(--error);
+    cursor: pointer;
+    font-size: 0.85em;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.btn-remove:hover {
+    background: rgba(220, 38, 38, 0.1);
+}
+
+/* 按钮 */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.95em;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+}
+
+.btn-primary {
+    background: var(--primary);
+    color: white;
+}
+
+.btn-primary:hover {
+    background: var(--primary-hover);
+}
+
+.btn-primary:disabled {
+    background: #93c5fd;
+    cursor: not-allowed;
+}
+
+.btn-secondary {
+    background: transparent;
+    color: var(--primary);
+    border: 1px solid var(--border);
+}
+
+.btn-secondary:hover {
+    background: rgba(37, 99, 235, 0.04);
+    border-color: var(--primary);
+}
+
+.btn-success {
+    background: var(--success);
+    color: white;
+}
+
+.btn-success:hover {
+    background: #15803d;
+}
+
+.btn-block {
+    width: 100%;
+}
+
+.btn-group {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+    flex-wrap: wrap;
+}
+
+/* 进度 */
+.progress-bar {
+    width: 100%;
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+    margin: 12px 0;
+}
+
+.progress-bar .fill {
+    height: 100%;
+    background: var(--primary);
+    border-radius: 3px;
+    transition: width 0.3s;
+}
+
+.progress-text {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+/* 结果区域 */
+.result-box {
+    padding: 16px;
+    border-radius: 6px;
+    margin-top: 16px;
+}
+
+.result-box.success {
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+}
+
+.result-box.error {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+}
+
+.result-box.info {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+}
+
+.result-box .result-label {
+    font-size: 0.85em;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.result-box.success .result-label {
+    color: var(--success);
+}
+
+.result-box.error .result-label {
+    color: var(--error);
+}
+
+.result-box .result-value {
+    font-size: 1.3em;
+    font-weight: 700;
+    word-break: break-all;
+    padding: 12px;
+    background: white;
+    border-radius: 4px;
+    text-align: center;
+    user-select: all;
+}
+
+/* 链接输出 */
+.share-link {
+    width: 100%;
+    padding: 10px;
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+    font-size: 0.82em;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    word-break: break-all;
+    resize: none;
+    min-height: 60px;
+}
+
+/* 求解页面 */
+.challenge-info {
+    background: var(--bg);
+    padding: 14px;
+    border-radius: 6px;
+    margin-bottom: 16px;
+}
+
+.challenge-info .info-title {
+    font-weight: 600;
+    font-size: 1.1em;
+    margin-bottom: 4px;
+}
+
+.challenge-info .info-desc {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+    margin-bottom: 8px;
+}
+
+.challenge-info .info-meta {
+    font-size: 0.82em;
+    color: var(--text-secondary);
+}
+
+.solve-question {
+    margin-bottom: 16px;
+}
+
+.solve-question label {
+    font-weight: 500;
+    margin-bottom: 2px;
+}
+
+.solve-question .hint {
+    font-size: 0.82em;
+    color: var(--warning);
+    margin-bottom: 6px;
+}
+
+/* 加载文件按钮 */
+.file-input-wrapper {
+    position: relative;
+    display: inline-block;
+}
+
+.file-input-wrapper input[type="file"] {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+}
+
+/* 隐藏区域 */
+.hidden {
+    display: none !important;
+}
+
+/* Footer */
+footer {
+    text-align: center;
+    padding: 30px 0;
+    color: var(--text-secondary);
+    font-size: 0.82em;
+}
+
+footer a {
+    color: var(--primary);
+    text-decoration: none;
+}
+
+footer a:hover {
+    text-decoration: underline;
+}
+
+/* 响应式 */
+@media (max-width: 600px) {
+    .container {
+        padding: 12px;
+    }
+
+    header h1 {
+        font-size: 1.4em;
+    }
+
+    .card {
+        padding: 16px;
+    }
+
+    .form-row {
+        flex-direction: column;
+        gap: 0;
+    }
+
+    .btn-group {
+        flex-direction: column;
+    }
+
+    .tab-btn {
+        padding: 12px 10px;
+        font-size: 0.9em;
+    }
+}
