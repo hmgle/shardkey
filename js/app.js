@@ -101,6 +101,19 @@ async function hashToHex(data) {
     return hex;
 }
 
+async function sha256Bytes(data) {
+    let buffer;
+    if (typeof data === 'string') {
+        buffer = new TextEncoder().encode(data);
+    } else if (data instanceof Uint8Array) {
+        buffer = data;
+    } else {
+        buffer = new Uint8Array(data);
+    }
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+    return new Uint8Array(hashBuffer);
+}
+
 function getSecureRandomBigInt(bits) {
     const bytes = Math.ceil(bits / 8);
     const arr = new Uint8Array(bytes);
@@ -127,6 +140,12 @@ function getSecureRandomBigIntInRange(min, max) {
         candidate = getSecureRandomBigInt(bits);
     } while (candidate >= span);
     return min + candidate;
+}
+
+function getSecureRandomBytes(byteLength) {
+    const arr = new Uint8Array(byteLength);
+    crypto.getRandomValues(arr);
+    return arr;
 }
 
 function yieldToUI() {
@@ -210,6 +229,27 @@ async function generateModuli(count, bitSize, onProgress) {
     return moduli;
 }
 
+async function deriveAnswerKeyBigIntPBKDF2(answer, saltBytes, iterations, dkLenBytes) {
+    const normalized = normalizeAnswer(answer);
+    const inputBytes = new TextEncoder().encode(normalized);
+    const keyMaterial = await crypto.subtle.importKey(
+        'raw',
+        inputBytes,
+        { name: 'PBKDF2' },
+        false,
+        ['deriveBits']
+    );
+
+    const derivedBits = await crypto.subtle.deriveBits(
+        { name: 'PBKDF2', hash: 'SHA-256', salt: saltBytes, iterations: iterations },
+        keyMaterial,
+        dkLenBytes * 8
+    );
+
+    const keyBytes = new Uint8Array(derivedBits);
+    return bytesToBigInt(keyBytes);
+}
+
 // =====================================================================
 // encoding.js — 编码模块
 // =====================================================================
@@ -237,9 +277,110 @@ function bigIntToSecret(n, byteLength) {
     return new TextDecoder().decode(bytes);
 }
 
+function bytesToBigInt(bytes) {
+    if (!bytes || bytes.length === 0) return 0n;
+    let hex = '';
+    for (const b of bytes) {
+        hex += b.toString(16).padStart(2, '0');
+    }
+    return BigInt('0x' + hex);
+}
+
+function bigIntToBytes(n, byteLength) {
+    if (byteLength === 0) return new Uint8Array(0);
+    let hex = n.toString(16);
+    hex = hex.padStart(byteLength * 2, '0');
+    const bytes = new Uint8Array(byteLength);
+    for (let i = 0; i < byteLength; i++) {
+        bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    }
+    return bytes;
+}
+
 function getSecretValueBase(byteLength) {
     if (byteLength <= 0) return 1n;
     return 1n << (8n * BigInt(byteLength));
+}
+
+function bytesToBase64Url(bytes) {
+    let binary = '';
+    for (const b of bytes) {
+        binary += String.fromCharCode(b);
+    }
+    let base64 = btoa(binary);
+    base64 = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    return base64;
+}
+
+function base64UrlToBytes(base64url) {
+    if (typeof base64url !== 'string' || base64url.length === 0) {
+        throw new Error('Base64Url 字段无效');
+    }
+    let base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+    while (base64.length % 4 !== 0) {
+        base64 += '=';
+    }
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+}
+
+async function encodeSecretPayloadV3(secretText) {
+    const secretBytes = new TextEncoder().encode(secretText);
+    if (secretBytes.length > 65535) {
+        throw new Error('秘密过长（最多 65535 字节）');
+    }
+
+    const checksumBytes = (await sha256Bytes(secretBytes)).slice(0, 16);
+    const payload = new Uint8Array(4 + 2 + secretBytes.length + checksumBytes.length);
+    payload[0] = 0x53; // S
+    payload[1] = 0x4b; // K
+    payload[2] = 0x33; // 3
+    payload[3] = 0x00;
+    payload[4] = (secretBytes.length >> 8) & 0xff;
+    payload[5] = secretBytes.length & 0xff;
+    payload.set(secretBytes, 6);
+    payload.set(checksumBytes, 6 + secretBytes.length);
+
+    return {
+        value: bytesToBigInt(payload),
+        byteLength: payload.length,
+        secretByteLength: secretBytes.length,
+    };
+}
+
+async function decodeSecretPayloadV3(payloadBytes) {
+    if (!(payloadBytes instanceof Uint8Array)) {
+        throw new Error('秘密载荷格式无效');
+    }
+    const minLen = 4 + 2 + 16;
+    if (payloadBytes.length < minLen) {
+        throw new Error('秘密载荷长度无效');
+    }
+    if (payloadBytes[0] !== 0x53 || payloadBytes[1] !== 0x4b || payloadBytes[2] !== 0x33 || payloadBytes[3] !== 0x00) {
+        throw new Error('秘密载荷标记无效');
+    }
+    const secretLen = (payloadBytes[4] << 8) | payloadBytes[5];
+    const checksumLen = 16;
+    const expectedLen = 4 + 2 + secretLen + checksumLen;
+    if (expectedLen !== payloadBytes.length) {
+        throw new Error('秘密载荷长度不匹配');
+    }
+    const secretBytes = payloadBytes.slice(6, 6 + secretLen);
+    const checksumBytes = payloadBytes.slice(6 + secretLen);
+
+    const computed = (await sha256Bytes(secretBytes)).slice(0, checksumLen);
+    for (let i = 0; i < checksumLen; i++) {
+        if (computed[i] !== checksumBytes[i]) {
+            throw new Error('秘密载荷校验失败');
+        }
+    }
+
+    const secretText = new TextDecoder().decode(secretBytes);
+    return { secretText: secretText, secretByteLength: secretLen };
 }
 
 function challengeToBase64(obj) {
@@ -363,8 +504,11 @@ async function checksumMatches(secretText, expectedChecksum) {
 }
 
 function decodeRecoveredSecretValue(recovered, challenge) {
-    if (challenge.version >= 2 && challenge.secretEncoding === 'offset-base256') {
-        const base = getSecretValueBase(challenge.secretByteLength);
+    if (challenge.version >= 2 && (challenge.secretEncoding === 'offset-base256' || challenge.secretEncoding === 'offset-payload-v3')) {
+        const byteLength = challenge.secretEncoding === 'offset-payload-v3'
+            ? challenge.secretPayloadByteLength
+            : challenge.secretByteLength;
+        const base = getSecretValueBase(byteLength);
         return ((recovered % base) + base) % base;
     }
     return recovered;
@@ -377,8 +521,11 @@ async function generateChallenge(secret, questions, threshold, title, descriptio
     }
     if (threshold < 2) throw new Error('门限值至少为 2');
 
-    const { value: rawSecretValue, byteLength } = secretToBigInt(secret);
-    const secretBits = Math.max(1, byteLength * 8);
+    const payload = await encodeSecretPayloadV3(secret);
+    const rawSecretValue = payload.value;
+    const payloadByteLength = payload.byteLength;
+    const secretByteLength = payload.secretByteLength;
+    const secretBits = Math.max(1, payloadByteLength * 8);
 
     const modBits = calculateModulusBitSize(secretBits, threshold);
 
@@ -403,7 +550,7 @@ async function generateChallenge(secret, questions, threshold, title, descriptio
         }
 
         try {
-            encodedSecret = chooseEncodedSecret(rawSecretValue, byteLength, alpha, beta);
+            encodedSecret = chooseEncodedSecret(rawSecretValue, payloadByteLength, alpha, beta);
             break;
         } catch (e) {
             if (attempt === maxAttempts - 1) {
@@ -417,15 +564,24 @@ async function generateChallenge(secret, questions, threshold, title, descriptio
         throw new Error('生成挑战失败，请重试。');
     }
 
+    const kdf = {
+        type: 'pbkdf2-sha256',
+        hash: 'SHA-256',
+        iterations: 120000,
+        dkLen: 32,
+        saltLen: 16,
+    };
+
     if (onProgress) onProgress('正在计算 XOR 掩码...', 0, questions.length);
     const questionEntries = [];
     for (let i = 0; i < questions.length; i++) {
         const q = questions[i];
-        const hashVal = await hashToBigInt(q.answer);
         const mi = moduli[i];
         const remainder = ((encodedSecret % mi) + mi) % mi;
-        const hashMod = ((hashVal % mi) + mi) % mi;
-        const xorValue = hashMod ^ remainder;
+        const saltBytes = getSecureRandomBytes(kdf.saltLen);
+        const keyVal = await deriveAnswerKeyBigIntPBKDF2(q.answer, saltBytes, kdf.iterations, kdf.dkLen);
+        const keyMod = ((keyVal % mi) + mi) % mi;
+        const xorValue = keyMod ^ remainder;
 
         questionEntries.push({
             id: i,
@@ -433,6 +589,7 @@ async function generateChallenge(secret, questions, threshold, title, descriptio
             hint: q.hint || '',
             modulus: mi.toString(),
             xorValue: xorValue.toString(),
+            salt: bytesToBase64Url(saltBytes),
         });
 
         if (onProgress) onProgress('正在计算 XOR 掩码...', i + 1, questions.length);
@@ -441,16 +598,15 @@ async function generateChallenge(secret, questions, threshold, title, descriptio
         }
     }
 
-    const checksum = (await hashToHex(new TextEncoder().encode(secret))).substring(0, 32);
-
     return {
-        version: 2,
-        secretEncoding: 'offset-base256',
+        version: 3,
+        secretEncoding: 'offset-payload-v3',
         title: title || '秘密挑战',
         description: description || '回答问题来获取秘密！',
         threshold: threshold,
-        secretByteLength: byteLength,
-        secretChecksum: checksum,
+        secretByteLength: secretByteLength,
+        secretPayloadByteLength: payloadByteLength,
+        kdf: kdf,
         questions: questionEntries,
         createdAt: new Date().toISOString(),
     };
@@ -467,6 +623,8 @@ async function recoverSecret(challenge, answers) {
     const secretByteLength = challenge.secretByteLength;
     const secretChecksum = challenge.secretChecksum;
     const questions = challenge.questions;
+    const secretPayloadByteLength = challenge.secretPayloadByteLength || secretByteLength;
+    const kdf = challenge.kdf || null;
 
     const answeredQuestions = questions.filter(function (q) {
         return answers[q.id] !== undefined && answers[q.id].trim() !== '';
@@ -485,16 +643,26 @@ async function recoverSecret(challenge, answers) {
 
     for (const q of answeredQuestions) {
         const userAnswer = answers[q.id];
-        const hashVal = await hashToBigInt(userAnswer);
         const mi = q.modulusBigInt || BigInt(q.modulus);
         const xorVal = q.xorValueBigInt || BigInt(q.xorValue);
-        const hashMod = ((hashVal % mi) + mi) % mi;
-        const bi = hashMod ^ xorVal;
+        let keyVal;
+        if (challenge.version >= 3) {
+            keyVal = await deriveAnswerKeyBigIntPBKDF2(userAnswer, q.saltBytes, kdf.iterations, kdf.dkLen);
+        } else {
+            keyVal = await hashToBigInt(userAnswer);
+        }
+        const keyMod = ((keyVal % mi) + mi) % mi;
+        const bi = keyMod ^ xorVal;
         entries.push({ remainder: bi, modulus: mi });
         if (entries.length % 8 === 0) {
             await yieldToUI();
         }
     }
+
+    const allModuli = questions.map(function (q) { return q.modulusBigInt || BigInt(q.modulus); });
+    const bounds = calculateMignotteBounds(allModuli, threshold);
+    const alpha = bounds.alpha;
+    const beta = bounds.beta;
 
     async function trySubset(subsetIndices) {
         const remainders = [];
@@ -504,11 +672,27 @@ async function recoverSecret(challenge, answers) {
             moduli.push(entries[idx].modulus);
         }
         const recovered = solveCRT(remainders, moduli);
+        if (recovered <= beta || recovered >= alpha) {
+            return null;
+        }
         const decodedValue = decodeRecoveredSecretValue(recovered, challenge);
-        const secretText = bigIntToSecret(decodedValue, secretByteLength);
-        const isMatch = await checksumMatches(secretText, secretChecksum);
-        if (isMatch) {
-            return secretText;
+        if (challenge.version >= 3) {
+            const payloadBytes = bigIntToBytes(decodedValue, secretPayloadByteLength);
+            try {
+                const decoded = await decodeSecretPayloadV3(payloadBytes);
+                if (decoded.secretByteLength !== secretByteLength) {
+                    return null;
+                }
+                return decoded.secretText;
+            } catch (e) {
+                return null;
+            }
+        } else {
+            const secretText = bigIntToSecret(decodedValue, secretByteLength);
+            const isMatch = await checksumMatches(secretText, secretChecksum);
+            if (isMatch) {
+                return secretText;
+            }
         }
         return null;
     }
@@ -574,7 +758,7 @@ async function recoverSecret(challenge, answers) {
         : '';
     return {
         success: false,
-        error: '校验和不匹配——部分答案可能不正确。请检查答案后重试。' + suffix,
+        error: '验证失败——部分答案可能不正确。请检查答案后重试。' + suffix,
         answeredCount: answeredCount,
         testedSubsets: testedSubsets,
     };
@@ -590,12 +774,18 @@ function validateChallengeData(challenge) {
     }
 
     const version = challenge.version === undefined ? 1 : challenge.version;
-    if (!Number.isInteger(version) || (version !== 1 && version !== 2)) {
+    if (!Number.isInteger(version) || (version !== 1 && version !== 2 && version !== 3)) {
         throw new Error('不支持的挑战版本');
     }
 
-    if (version === 2 && challenge.secretEncoding !== 'offset-base256') {
-        throw new Error('不支持的秘密编码格式');
+    if (version === 2) {
+        if (challenge.secretEncoding !== 'offset-base256') {
+            throw new Error('不支持的秘密编码格式');
+        }
+    } else if (version === 3) {
+        if (challenge.secretEncoding !== 'offset-payload-v3') {
+            throw new Error('不支持的秘密编码格式');
+        }
     }
 
     const threshold = Number(challenge.threshold);
@@ -608,9 +798,45 @@ function validateChallengeData(challenge) {
         throw new Error('秘密长度字段无效');
     }
 
-    const secretChecksum = challenge.secretChecksum;
-    if (typeof secretChecksum !== 'string' || !/^[0-9a-f]{8,64}$/i.test(secretChecksum)) {
-        throw new Error('秘密校验字段无效');
+    let secretPayloadByteLength = secretByteLength;
+    let secretChecksum = '';
+    let kdf = null;
+
+    if (version === 3) {
+        secretPayloadByteLength = Number(challenge.secretPayloadByteLength);
+        if (!Number.isInteger(secretPayloadByteLength) || secretPayloadByteLength < 22 || secretPayloadByteLength > 70000) {
+            throw new Error('秘密载荷长度字段无效');
+        }
+        if (secretPayloadByteLength !== secretByteLength + 22) {
+            throw new Error('秘密载荷长度字段无效');
+        }
+
+        if (!isPlainObject(challenge.kdf)) {
+            throw new Error('KDF 参数无效');
+        }
+        const kdfType = String(challenge.kdf.type || '');
+        const kdfHash = String(challenge.kdf.hash || '');
+        const kdfIterations = Number(challenge.kdf.iterations);
+        const kdfDkLen = Number(challenge.kdf.dkLen);
+        const kdfSaltLen = Number(challenge.kdf.saltLen);
+        if (kdfType !== 'pbkdf2-sha256' || kdfHash !== 'SHA-256') {
+            throw new Error('KDF 参数无效');
+        }
+        if (!Number.isInteger(kdfIterations) || kdfIterations < 1000 || kdfIterations > 2000000) {
+            throw new Error('KDF 迭代次数无效');
+        }
+        if (!Number.isInteger(kdfDkLen) || kdfDkLen < 16 || kdfDkLen > 64) {
+            throw new Error('KDF 输出长度无效');
+        }
+        if (!Number.isInteger(kdfSaltLen) || kdfSaltLen < 8 || kdfSaltLen > 32) {
+            throw new Error('KDF salt 长度无效');
+        }
+        kdf = { type: kdfType, hash: kdfHash, iterations: kdfIterations, dkLen: kdfDkLen, saltLen: kdfSaltLen };
+    } else {
+        secretChecksum = challenge.secretChecksum;
+        if (typeof secretChecksum !== 'string' || !/^[0-9a-f]{8,64}$/i.test(secretChecksum)) {
+            throw new Error('秘密校验字段无效');
+        }
     }
 
     if (!Array.isArray(challenge.questions) || challenge.questions.length === 0 || challenge.questions.length > 128) {
@@ -651,6 +877,19 @@ function validateChallengeData(challenge) {
             throw new Error('题目参数取值无效');
         }
 
+        let salt = '';
+        let saltBytes = null;
+        if (version === 3) {
+            salt = String(q.salt || '');
+            if (!/^[0-9A-Za-z_-]{8,200}$/.test(salt)) {
+                throw new Error('题目 salt 无效');
+            }
+            saltBytes = base64UrlToBytes(salt);
+            if (saltBytes.length !== kdf.saltLen) {
+                throw new Error('题目 salt 无效');
+            }
+        }
+
         for (const prev of usedModuli) {
             if (gcd(prev, modulusBigInt) !== 1n) {
                 throw new Error('模数不是两两互素');
@@ -666,17 +905,21 @@ function validateChallengeData(challenge) {
             xorValue: xorValueBigInt.toString(),
             modulusBigInt: modulusBigInt,
             xorValueBigInt: xorValueBigInt,
+            salt: salt,
+            saltBytes: saltBytes,
         };
     });
 
     return {
         version: version,
-        secretEncoding: version === 2 ? 'offset-base256' : undefined,
+        secretEncoding: version === 2 ? 'offset-base256' : (version === 3 ? 'offset-payload-v3' : undefined),
         title: typeof challenge.title === 'string' ? challenge.title : '秘密挑战',
         description: typeof challenge.description === 'string' ? challenge.description : '',
         threshold: threshold,
         secretByteLength: secretByteLength,
-        secretChecksum: secretChecksum.toLowerCase(),
+        secretPayloadByteLength: secretPayloadByteLength,
+        secretChecksum: secretChecksum ? secretChecksum.toLowerCase() : '',
+        kdf: kdf,
         questions: normalizedQuestions,
         createdAt: typeof challenge.createdAt === 'string' ? challenge.createdAt : '',
     };
@@ -756,6 +999,8 @@ function checkRuntimeSupport() {
     if (typeof TextEncoder === 'undefined' || typeof TextDecoder === 'undefined') missing.push('TextEncoder/TextDecoder');
     if (!window.crypto || typeof crypto.getRandomValues !== 'function') missing.push('crypto.getRandomValues');
     if (!window.crypto || !crypto.subtle || typeof crypto.subtle.digest !== 'function') missing.push('crypto.subtle.digest');
+    if (!window.crypto || !crypto.subtle || typeof crypto.subtle.importKey !== 'function') missing.push('crypto.subtle.importKey');
+    if (!window.crypto || !crypto.subtle || typeof crypto.subtle.deriveBits !== 'function') missing.push('crypto.subtle.deriveBits');
 
     if (missing.length === 0) {
         setRuntimeWarning('');

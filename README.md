@@ -31,6 +31,7 @@ python3 -m http.server 8000
 - Pure HTML/CSS/JavaScript, no external dependencies
 - BigInt-based large integer arithmetic
 - SHA-256 via Web Crypto API
+- v3 challenges harden answers via PBKDF2 (per-question salt)
 - Fully local execution in browser (supports `file://`)
 
 ## Security Notes
@@ -41,6 +42,6 @@ python3 -m http.server 8000
 
 ### Important limitations
 
-- The published checksum can be used as an **offline guessing oracle** for low-entropy secrets (e.g. short PINs, phone numbers). Use a high-entropy secret (or add a random suffix) if you need real confidentiality.
-- Answer verification uses fast SHA-256; weak/guessable answers are vulnerable to offline dictionary attacks.
+- Legacy (v1/v2) challenges publish a checksum that can be used as an **offline guessing oracle** for low-entropy secrets (e.g. short PINs, phone numbers). v3 avoids publishing this, but you should still use a high-entropy secret for real confidentiality.
+- Legacy (v1/v2) challenges use fast SHA-256 for answers; weak/guessable answers are vulnerable to offline dictionary attacks. v3 uses PBKDF2 hardening, but weak answers can still be guessed given enough time/resources.
 - Mignotte/CRT is not Shamir secret sharing and does not provide perfect secrecy; do not treat this tool as a substitute for vetted cryptographic secret sharing.
