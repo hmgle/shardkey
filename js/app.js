@@ -694,6 +694,8 @@ var tabBtns = document.querySelectorAll('.tab-btn');
 var panelCreate = document.getElementById('panel-create');
 var panelSolve = document.getElementById('panel-solve');
 
+var runtimeWarningEl = document.getElementById('runtime-warning');
+
 var secretInput = document.getElementById('secret-input');
 var challengeTitleEl = document.getElementById('challenge-title');
 var challengeDescEl = document.getElementById('challenge-desc');
@@ -735,6 +737,70 @@ function escapeHtml(text) {
     var div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+function setRuntimeWarning(messageHtml) {
+    if (!runtimeWarningEl) return;
+    if (!messageHtml) {
+        runtimeWarningEl.classList.add('hidden');
+        runtimeWarningEl.innerHTML = '';
+        return;
+    }
+    runtimeWarningEl.classList.remove('hidden');
+    runtimeWarningEl.innerHTML = messageHtml;
+}
+
+function checkRuntimeSupport() {
+    var missing = [];
+    if (typeof BigInt === 'undefined') missing.push('BigInt');
+    if (typeof TextEncoder === 'undefined' || typeof TextDecoder === 'undefined') missing.push('TextEncoder/TextDecoder');
+    if (!window.crypto || typeof crypto.getRandomValues !== 'function') missing.push('crypto.getRandomValues');
+    if (!window.crypto || !crypto.subtle || typeof crypto.subtle.digest !== 'function') missing.push('crypto.subtle.digest');
+
+    if (missing.length === 0) {
+        setRuntimeWarning('');
+        return;
+    }
+
+    setRuntimeWarning(
+        '<div class="result-box warning">' +
+            '<div class="result-label">运行环境不支持</div>' +
+            '<p style="font-size: 0.9em; color: var(--text-secondary);">' +
+                '当前浏览器缺少必要能力：' + escapeHtml(missing.join(', ')) + '。' +
+                '建议使用最新版 Chrome / Edge / Firefox，并尽量通过本地静态服务打开（例如 <code>python3 -m http.server 8000</code>）。' +
+            '</p>' +
+        '</div>'
+    );
+}
+
+async function copyFromTextarea(textarea) {
+    try {
+        textarea.focus();
+        textarea.select();
+    } catch (e) {
+        // ignore
+    }
+
+    var text = textarea.value;
+
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch (e) {
+            // fall through to legacy copy
+        }
+    }
+
+    try {
+        if (document.execCommand && document.execCommand('copy')) {
+            return true;
+        }
+    } catch (e) {
+        // ignore
+    }
+
+    return false;
 }
 
 function addQuestion(text, answer, hint) {
@@ -824,6 +890,8 @@ addQuestion();
 addQuestion();
 addQuestion();
 
+checkRuntimeSupport();
+
 btnGenerate.addEventListener('click', async function () {
     var secret = secretInput.value.trim();
     if (!secret) {
@@ -864,6 +932,13 @@ btnGenerate.addEventListener('click', async function () {
         );
 
         var url = challengeToURL(challenge);
+        var urlHint = '';
+        if (url.length > 2000) {
+            urlHint =
+                '<div class="form-hint" style="margin-top: 10px; color: var(--warning);">' +
+                    '提示：链接长度为 ' + url.length + '，部分平台可能截断或打不开，建议使用“下载 JSON 文件”分享。' +
+                '</div>';
+        }
         generateResult.classList.remove('hidden');
         generateResult.innerHTML =
             '<div class="result-box success">' +
@@ -872,6 +947,7 @@ btnGenerate.addEventListener('click', async function () {
                     '分享以下链接给你的朋友。他们需要正确回答至少 ' + threshold + ' 个问题才能获取秘密。' +
                 '</p>' +
                 '<textarea class="share-link" readonly id="share-link-output">' + escapeHtml(url) + '</textarea>' +
+                urlHint +
                 '<div class="btn-group">' +
                     '<button class="btn btn-primary" id="btn-copy-link">复制链接</button>' +
                     '<button class="btn btn-secondary" id="btn-download-json">下载 JSON 文件</button>' +
@@ -880,14 +956,14 @@ btnGenerate.addEventListener('click', async function () {
 
         document.getElementById('btn-copy-link').addEventListener('click', function () {
             var textarea = document.getElementById('share-link-output');
-            textarea.select();
-            navigator.clipboard.writeText(textarea.value).then(function () {
-                document.getElementById('btn-copy-link').textContent = '已复制！';
-                setTimeout(function () {
-                    document.getElementById('btn-copy-link').textContent = '复制链接';
-                }, 2000);
-            }).catch(function () {
-                showGenerateError('复制失败，请手动复制链接。');
+            var btn = document.getElementById('btn-copy-link');
+            copyFromTextarea(textarea).then(function (ok) {
+                if (ok) {
+                    btn.textContent = '已复制！';
+                } else {
+                    btn.textContent = '复制失败';
+                }
+                setTimeout(function () { btn.textContent = '复制链接'; }, 2000);
             });
         });
 

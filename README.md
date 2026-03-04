@@ -38,3 +38,9 @@ python3 -m http.server 8000
 - Shared data does not include the plaintext secret, correct answers, or answer hashes
 - The threshold scheme prevents recovery with insufficient correct answers
 - A checksum validates recovered results and avoids false unlocks
+
+### Important limitations
+
+- The published checksum can be used as an **offline guessing oracle** for low-entropy secrets (e.g. short PINs, phone numbers). Use a high-entropy secret (or add a random suffix) if you need real confidentiality.
+- Answer verification uses fast SHA-256; weak/guessable answers are vulnerable to offline dictionary attacks.
+- Mignotte/CRT is not Shamir secret sharing and does not provide perfect secrecy; do not treat this tool as a substitute for vetted cryptographic secret sharing.
