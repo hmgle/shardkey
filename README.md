@@ -28,11 +28,9 @@ python3 -m http.server 8000
 
 ### Multiple acceptable answers (per question)
 
-When creating a challenge, each question can accept multiple valid answers: separate variants with newlines or `|`. Examples:
+When creating a challenge, each question can accept multiple valid answers: click “+ 添加备选答案” (Add alternative answer) to add more answer inputs. Any one of them being correct counts (case-insensitive).
 
-- `42|fourty two` (typo example)
-- `42|forty two`
-- Put `42` and `四十二` on separate lines
+Answer text can contain any characters (including `|`). The app no longer uses separators to split multiple answers.
 
 ## Technical Notes
 

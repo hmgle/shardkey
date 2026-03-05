@@ -163,10 +163,6 @@ textarea {
     min-height: 80px;
 }
 
-.question-item textarea.q-answer {
-    min-height: 44px;
-}
-
 .form-group {
     margin-bottom: 16px;
 }
@@ -220,6 +216,44 @@ textarea {
 
 .btn-remove:hover {
     background: rgba(220, 38, 38, 0.1);
+}
+
+/* 多答案 */
+.answers-group .answers-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.answers-group .answer-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.answers-group .answer-row input {
+    flex: 1;
+}
+
+.btn-remove-answer {
+    background: none;
+    border: none;
+    color: var(--error);
+    cursor: pointer;
+    font-size: 0.82em;
+    padding: 4px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+
+.btn-remove-answer:hover {
+    background: rgba(220, 38, 38, 0.1);
+}
+
+.btn.btn-add-answer {
+    margin-top: 6px;
+    padding: 4px 12px;
+    font-size: 0.82em;
 }
 
 /* 按钮 */

@@ -71,22 +71,6 @@ function normalizeAnswer(text) {
     return text.trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
-function parseAnswerOptions(text) {
-    if (typeof text !== 'string') return [];
-    const parts = text.split(/[\r\n|｜]+/g);
-    const options = [];
-    const seen = new Set();
-    for (const part of parts) {
-        const trimmed = part.trim();
-        if (!trimmed) continue;
-        const normalized = normalizeAnswer(trimmed);
-        if (seen.has(normalized)) continue;
-        seen.add(normalized);
-        options.push(trimmed);
-    }
-    return options;
-}
-
 async function sha256Bytes(data) {
     let buffer;
     if (typeof data === 'string') {
@@ -530,35 +514,37 @@ async function generateChallenge(secret, questions, threshold, title, descriptio
         const q = questions[i];
         const mi = moduli[i];
         const remainder = ((encodedSecret % mi) + mi) % mi;
-        const answerOptions = Array.isArray(q.answers) ? q.answers : parseAnswerOptions(q.answer);
-        if (answerOptions.length === 0) {
+
+        const answerOptions = Array.isArray(q.answers) ? q.answers : [q.answer];
+        if (answerOptions.length === 0 || !answerOptions.some(function (a) { return String(a || '').trim(); })) {
             throw new Error('第 ' + (i + 1) + ' 个问题缺少答案');
         }
         if (answerOptions.length > 16) {
             throw new Error('第 ' + (i + 1) + ' 个问题答案过多（最多 16 个）');
         }
 
-        const variants = [];
+        const saltBytes = getSecureRandomBytes(kdf.saltLen);
+
+        const xorValues = [];
         for (const answerText of answerOptions) {
-            const saltBytes = getSecureRandomBytes(kdf.saltLen);
+            if (!String(answerText || '').trim()) continue;
             const keyVal = await deriveAnswerKeyBigIntPBKDF2(answerText, saltBytes, kdf.iterations, kdf.dkLen);
             const keyMod = ((keyVal % mi) + mi) % mi;
             const xorValue = keyMod ^ remainder;
-            variants.push({
-                xorValue: xorValue.toString(),
-                salt: bytesToBase64Url(saltBytes),
-            });
+            xorValues.push(xorValue.toString());
         }
-        const primary = variants[0];
+        if (xorValues.length === 0) {
+            throw new Error('第 ' + (i + 1) + ' 个问题缺少答案');
+        }
 
         questionEntries.push({
             id: i,
             text: q.question,
             hint: q.hint || '',
             modulus: mi.toString(),
-            xorValue: primary.xorValue,
-            salt: primary.salt,
-            variants: variants,
+            xorValue: xorValues[0],
+            xorValues: xorValues,
+            salt: bytesToBase64Url(saltBytes),
         });
 
         if (onProgress) onProgress('正在计算 XOR 掩码...', i + 1, questions.length);
@@ -612,27 +598,41 @@ async function recoverSecret(challenge, answers) {
     for (const q of answeredQuestions) {
         const userAnswer = answers[q.id];
         const mi = q.modulusBigInt || BigInt(q.modulus);
-        const variants = Array.isArray(q.variants) && q.variants.length > 0
-            ? q.variants
-            : [{
-                xorValueBigInt: q.xorValueBigInt || BigInt(q.xorValue),
-                saltBytes: q.saltBytes,
-            }];
-
         const candidates = [];
         const seen = new Set();
-        for (const v of variants) {
-            const xorVal = v.xorValueBigInt || BigInt(v.xorValue);
-            const saltBytes = v.saltBytes || base64UrlToBytes(String(v.salt || ''));
-            const keyVal = await deriveAnswerKeyBigIntPBKDF2(userAnswer, saltBytes, kdf.iterations, kdf.dkLen);
+
+        if (Array.isArray(q.xorValuesBigInt) && q.xorValuesBigInt.length > 0) {
+            const keyVal = await deriveAnswerKeyBigIntPBKDF2(userAnswer, q.saltBytes, kdf.iterations, kdf.dkLen);
             const keyMod = ((keyVal % mi) + mi) % mi;
-            const bi = keyMod ^ xorVal;
-            const biKey = bi.toString();
-            if (!seen.has(biKey)) {
-                seen.add(biKey);
-                candidates.push(bi);
+            for (const xorVal of q.xorValuesBigInt) {
+                const bi = keyMod ^ xorVal;
+                const biKey = bi.toString();
+                if (!seen.has(biKey)) {
+                    seen.add(biKey);
+                    candidates.push(bi);
+                }
+                if (candidates.length >= 16) break;
             }
-            if (candidates.length >= 16) break;
+        } else {
+            const variants = Array.isArray(q.variants) && q.variants.length > 0
+                ? q.variants
+                : [{
+                    xorValueBigInt: q.xorValueBigInt || BigInt(q.xorValue),
+                    saltBytes: q.saltBytes,
+                }];
+            for (const v of variants) {
+                const xorVal = v.xorValueBigInt || BigInt(v.xorValue);
+                const saltBytes = v.saltBytes || base64UrlToBytes(String(v.salt || ''));
+                const keyVal = await deriveAnswerKeyBigIntPBKDF2(userAnswer, saltBytes, kdf.iterations, kdf.dkLen);
+                const keyMod = ((keyVal % mi) + mi) % mi;
+                const bi = keyMod ^ xorVal;
+                const biKey = bi.toString();
+                if (!seen.has(biKey)) {
+                    seen.add(biKey);
+                    candidates.push(bi);
+                }
+                if (candidates.length >= 16) break;
+            }
         }
 
         if (candidates.length === 0) {
@@ -888,14 +888,52 @@ function validateChallengeData(challenge) {
             };
         }
 
+        let xorValuesBigInt = null;
+        let xorValueBigInt = null;
+        let salt = null;
+        let saltBytes = null;
         let variants = [];
-        if (Array.isArray(q.variants)) {
+
+        if (Array.isArray(q.xorValues) && q.xorValues.length > 0) {
+            if (q.xorValues.length > 16) {
+                throw new Error('单题答案变体过多（最多 16 个）');
+            }
+            const xorValueStrs = q.xorValues.map(function (v) { return String(v || ''); });
+            for (const xvs of xorValueStrs) {
+                if (!/^\d{1,1200}$/.test(xvs)) {
+                    throw new Error('题目参数格式无效');
+                }
+            }
+            xorValuesBigInt = xorValueStrs.map(function (s) { return BigInt(s); });
+            for (const xvb of xorValuesBigInt) {
+                if (xvb < 0n) {
+                    throw new Error('题目参数取值无效');
+                }
+            }
+            xorValueBigInt = xorValuesBigInt[0];
+
+            salt = String(q.salt || '');
+            if (!/^[0-9A-Za-z_-]{8,200}$/.test(salt)) {
+                throw new Error('题目 salt 无效');
+            }
+            saltBytes = base64UrlToBytes(salt);
+            if (saltBytes.length !== kdf.saltLen) {
+                throw new Error('题目 salt 无效');
+            }
+        } else if (Array.isArray(q.variants)) {
             if (q.variants.length === 0 || q.variants.length > 64) {
                 throw new Error('题目答案变体数量无效');
             }
             variants = q.variants.map(parseVariant);
+            xorValueBigInt = variants[0].xorValueBigInt;
+            salt = variants[0].salt;
+            saltBytes = variants[0].saltBytes;
         } else {
-            variants = [parseVariant({ xorValue: q.xorValue, salt: q.salt })];
+            const primary = parseVariant({ xorValue: q.xorValue, salt: q.salt });
+            variants = [primary];
+            xorValueBigInt = primary.xorValueBigInt;
+            salt = primary.salt;
+            saltBytes = primary.saltBytes;
         }
 
         for (const prev of usedModuli) {
@@ -905,17 +943,18 @@ function validateChallengeData(challenge) {
         }
         usedModuli.push(modulusBigInt);
 
-        const primary = variants[0];
         return {
             id: id,
             text: text,
             hint: hint,
             modulus: modulusBigInt.toString(),
             modulusBigInt: modulusBigInt,
-            xorValue: primary.xorValue,
-            xorValueBigInt: primary.xorValueBigInt,
-            salt: primary.salt,
-            saltBytes: primary.saltBytes,
+            xorValue: xorValueBigInt.toString(),
+            xorValueBigInt: xorValueBigInt,
+            xorValues: xorValuesBigInt ? xorValuesBigInt.map(function (v) { return v.toString(); }) : null,
+            xorValuesBigInt: xorValuesBigInt,
+            salt: salt,
+            saltBytes: saltBytes,
             variants: variants,
         };
     });
@@ -1059,10 +1098,15 @@ async function copyFromTextarea(textarea) {
 
 function addQuestion(text, answer, hint) {
     text = text || '';
-    answer = answer || '';
     hint = hint || '';
     var id = questionIdCounter++;
-    appQuestions.push({ id: id, question: text, answer: answer, hint: hint });
+    var answers = [];
+    if (Array.isArray(answer)) {
+        answers = answer.length > 0 ? answer : [''];
+    } else {
+        answers = [answer || ''];
+    }
+    appQuestions.push({ id: id, question: text, answers: answers, hint: hint });
     renderQuestions();
     return id;
 }
@@ -1085,6 +1129,19 @@ function renderQuestions() {
     appQuestions.forEach(function (q, index) {
         var div = document.createElement('div');
         div.className = 'question-item';
+
+        var answersHtml = '';
+        q.answers.forEach(function (ans, ansIdx) {
+            var removeAnsBtn = q.answers.length > 1
+                ? '<button class="btn-remove-answer" data-id="' + q.id + '" data-aidx="' + ansIdx + '">删除</button>'
+                : '';
+            answersHtml +=
+                '<div class="answer-row">' +
+                    '<input type="text" class="q-answer" data-id="' + q.id + '" data-aidx="' + ansIdx + '" value="' + escapeHtml(ans) + '" placeholder="答案' + (q.answers.length > 1 ? ' ' + (ansIdx + 1) : '') + '（大小写不敏感）">' +
+                    removeAnsBtn +
+                '</div>';
+        });
+
         div.innerHTML =
             '<div class="question-header">' +
                 '<span class="question-number">问题 ' + (index + 1) + '</span>' +
@@ -1095,10 +1152,10 @@ function renderQuestions() {
                 '<input type="text" class="q-text" data-id="' + q.id + '" value="' + escapeHtml(q.question) + '" placeholder="例如：我的猫叫什么名字？">' +
             '</div>' +
             '<div class="form-row">' +
-                '<div class="form-group">' +
-                    '<label>正确答案（可多个）</label>' +
-                    '<textarea class="q-answer" data-id="' + q.id + '" placeholder="支持多个答案：用换行或 | 分隔（大小写不敏感）">' + escapeHtml(q.answer) + '</textarea>' +
-                    '<div class="form-hint">示例：<code>42|四十二</code> 或分两行填写。</div>' +
+                '<div class="form-group answers-group">' +
+                    '<label>正确答案</label>' +
+                    '<div class="answers-list">' + answersHtml + '</div>' +
+                    '<button class="btn-add-answer btn btn-secondary" data-id="' + q.id + '">+ 添加备选答案</button>' +
                 '</div>' +
                 '<div class="form-group">' +
                     '<label>提示（可选）</label>' +
@@ -1115,16 +1172,41 @@ btnAddQuestion.addEventListener('click', function () { addQuestion(); });
 
 questionList.addEventListener('click', function (e) {
     var removeBtn = e.target.closest('.btn-remove');
-    if (!removeBtn) return;
-    var id = parseDataId(removeBtn.dataset.id);
-    if (!Number.isNaN(id)) {
-        removeQuestion(id);
+    if (removeBtn) {
+        var id = parseDataId(removeBtn.dataset.id);
+        if (!Number.isNaN(id)) {
+            removeQuestion(id);
+        }
+        return;
+    }
+
+    var addAnsBtn = e.target.closest('.btn-add-answer');
+    if (addAnsBtn) {
+        var qid = parseDataId(addAnsBtn.dataset.id);
+        var q = getQuestionById(qid);
+        if (q && q.answers.length < 16) {
+            q.answers.push('');
+            renderQuestions();
+        }
+        return;
+    }
+
+    var removeAnsBtn = e.target.closest('.btn-remove-answer');
+    if (removeAnsBtn) {
+        var qid2 = parseDataId(removeAnsBtn.dataset.id);
+        var aidx = Number.parseInt(removeAnsBtn.dataset.aidx, 10);
+        var q2 = getQuestionById(qid2);
+        if (q2 && q2.answers.length > 1 && aidx >= 0 && aidx < q2.answers.length) {
+            q2.answers.splice(aidx, 1);
+            renderQuestions();
+        }
+        return;
     }
 });
 
 questionList.addEventListener('input', function (e) {
     var target = e.target;
-    if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLTextAreaElement)) return;
+    if (!(target instanceof HTMLInputElement)) return;
     if (!target.dataset.id) return;
 
     var id = parseDataId(target.dataset.id);
@@ -1135,7 +1217,10 @@ questionList.addEventListener('input', function (e) {
     if (target.classList.contains('q-text')) {
         q.question = target.value;
     } else if (target.classList.contains('q-answer')) {
-        q.answer = target.value;
+        var aidx = Number.parseInt(target.dataset.aidx, 10);
+        if (!Number.isNaN(aidx) && aidx >= 0 && aidx < q.answers.length) {
+            q.answers[aidx] = target.value;
+        }
     } else if (target.classList.contains('q-hint')) {
         q.hint = target.value;
     }
@@ -1154,16 +1239,10 @@ btnGenerate.addEventListener('click', async function () {
         return;
     }
 
-    var preparedQuestions = [];
-    appQuestions.forEach(function (q) {
-        var questionText = q.question.trim();
-        var answers = parseAnswerOptions(q.answer);
-        if (questionText && answers.length > 0) {
-            preparedQuestions.push({ question: questionText, answers: answers, hint: q.hint });
-        }
+    var validQuestions = appQuestions.filter(function (q) {
+        return q.question.trim() && q.answers.some(function (a) { return a.trim(); });
     });
-
-    if (preparedQuestions.length < 2) {
+    if (validQuestions.length < 2) {
         showGenerateError('请至少设置 2 个包含问题和答案的问题。');
         return;
     }
@@ -1173,14 +1252,28 @@ btnGenerate.addEventListener('click', async function () {
         showGenerateError('门限值至少为 2。');
         return;
     }
-    if (threshold > preparedQuestions.length) {
-        showGenerateError('门限值 (' + threshold + ') 不能超过有效问题数 (' + preparedQuestions.length + ')。');
+    if (threshold > validQuestions.length) {
+        showGenerateError('门限值 (' + threshold + ') 不能超过有效问题数 (' + validQuestions.length + ')。');
         return;
     }
 
     btnGenerate.disabled = true;
     generateProgress.classList.remove('hidden');
     generateResult.classList.add('hidden');
+
+    var preparedQuestions = validQuestions.map(function (q) {
+        var nonEmpty = q.answers.filter(function (a) { return a.trim(); });
+        var seen = new Set();
+        var unique = [];
+        for (var ai = 0; ai < nonEmpty.length; ai++) {
+            var norm = normalizeAnswer(nonEmpty[ai]);
+            if (!seen.has(norm)) {
+                seen.add(norm);
+                unique.push(nonEmpty[ai]);
+            }
+        }
+        return { question: q.question, answers: unique, hint: q.hint };
+    });
 
     try {
         var challenge = await generateChallenge(
