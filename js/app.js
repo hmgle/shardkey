@@ -446,7 +446,8 @@ function chooseEncodedSecret(rawSecretValue, byteLength, alpha, beta) {
 
 function decodeRecoveredSecretValueV3(recovered, secretPayloadByteLength) {
     const base = getSecretValueBase(secretPayloadByteLength);
-    return recovered % base;
+    const mod = recovered % base;
+    return mod < 0n ? mod + base : mod;
 }
 
 async function generateChallenge(secret, questions, threshold, title, description, onProgress) {
@@ -615,7 +616,6 @@ async function recoverSecret(challenge, answers) {
         } catch (e) {
             return null;
         }
-        return null;
     }
 
     const maxSubsetTries = 4096;
