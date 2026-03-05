@@ -71,36 +71,6 @@ function normalizeAnswer(text) {
     return text.trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
-async function hashToBigInt(text) {
-    const normalized = normalizeAnswer(text);
-    const data = new TextEncoder().encode(normalized);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    const hashArray = new Uint8Array(hashBuffer);
-    let hex = '';
-    for (const b of hashArray) {
-        hex += b.toString(16).padStart(2, '0');
-    }
-    return BigInt('0x' + hex);
-}
-
-async function hashToHex(data) {
-    let buffer;
-    if (typeof data === 'string') {
-        buffer = new TextEncoder().encode(data);
-    } else if (data instanceof Uint8Array) {
-        buffer = data;
-    } else {
-        buffer = new Uint8Array(data);
-    }
-    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-    const hashArray = new Uint8Array(hashBuffer);
-    let hex = '';
-    for (const b of hashArray) {
-        hex += b.toString(16).padStart(2, '0');
-    }
-    return hex;
-}
-
 async function sha256Bytes(data) {
     let buffer;
     if (typeof data === 'string') {
@@ -253,29 +223,6 @@ async function deriveAnswerKeyBigIntPBKDF2(answer, saltBytes, iterations, dkLenB
 // =====================================================================
 // encoding.js — 编码模块
 // =====================================================================
-
-function secretToBigInt(text) {
-    const bytes = new TextEncoder().encode(text);
-    if (bytes.length === 0) {
-        return { value: 0n, byteLength: 0 };
-    }
-    let hex = '';
-    for (const b of bytes) {
-        hex += b.toString(16).padStart(2, '0');
-    }
-    return { value: BigInt('0x' + hex), byteLength: bytes.length };
-}
-
-function bigIntToSecret(n, byteLength) {
-    if (byteLength === 0) return '';
-    let hex = n.toString(16);
-    hex = hex.padStart(byteLength * 2, '0');
-    const bytes = new Uint8Array(byteLength);
-    for (let i = 0; i < byteLength; i++) {
-        bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-    }
-    return new TextDecoder().decode(bytes);
-}
 
 function bytesToBigInt(bytes) {
     if (!bytes || bytes.length === 0) return 0n;
@@ -497,21 +444,9 @@ function chooseEncodedSecret(rawSecretValue, byteLength, alpha, beta) {
     return rawSecretValue + k * base;
 }
 
-async function checksumMatches(secretText, expectedChecksum) {
-    const secretBytes = new TextEncoder().encode(secretText);
-    const checksumHex = await hashToHex(secretBytes);
-    return checksumHex.substring(0, expectedChecksum.length) === expectedChecksum;
-}
-
-function decodeRecoveredSecretValue(recovered, challenge) {
-    if (challenge.version >= 2 && (challenge.secretEncoding === 'offset-base256' || challenge.secretEncoding === 'offset-payload-v3')) {
-        const byteLength = challenge.secretEncoding === 'offset-payload-v3'
-            ? challenge.secretPayloadByteLength
-            : challenge.secretByteLength;
-        const base = getSecretValueBase(byteLength);
-        return ((recovered % base) + base) % base;
-    }
-    return recovered;
+function decodeRecoveredSecretValueV3(recovered, secretPayloadByteLength) {
+    const base = getSecretValueBase(secretPayloadByteLength);
+    return recovered % base;
 }
 
 async function generateChallenge(secret, questions, threshold, title, description, onProgress) {
@@ -621,10 +556,9 @@ async function recoverSecret(challenge, answers) {
 
     const threshold = challenge.threshold;
     const secretByteLength = challenge.secretByteLength;
-    const secretChecksum = challenge.secretChecksum;
     const questions = challenge.questions;
-    const secretPayloadByteLength = challenge.secretPayloadByteLength || secretByteLength;
-    const kdf = challenge.kdf || null;
+    const secretPayloadByteLength = challenge.secretPayloadByteLength;
+    const kdf = challenge.kdf;
 
     const answeredQuestions = questions.filter(function (q) {
         return answers[q.id] !== undefined && answers[q.id].trim() !== '';
@@ -645,12 +579,7 @@ async function recoverSecret(challenge, answers) {
         const userAnswer = answers[q.id];
         const mi = q.modulusBigInt || BigInt(q.modulus);
         const xorVal = q.xorValueBigInt || BigInt(q.xorValue);
-        let keyVal;
-        if (challenge.version >= 3) {
-            keyVal = await deriveAnswerKeyBigIntPBKDF2(userAnswer, q.saltBytes, kdf.iterations, kdf.dkLen);
-        } else {
-            keyVal = await hashToBigInt(userAnswer);
-        }
+        const keyVal = await deriveAnswerKeyBigIntPBKDF2(userAnswer, q.saltBytes, kdf.iterations, kdf.dkLen);
         const keyMod = ((keyVal % mi) + mi) % mi;
         const bi = keyMod ^ xorVal;
         entries.push({ remainder: bi, modulus: mi });
@@ -675,24 +604,16 @@ async function recoverSecret(challenge, answers) {
         if (recovered <= beta || recovered >= alpha) {
             return null;
         }
-        const decodedValue = decodeRecoveredSecretValue(recovered, challenge);
-        if (challenge.version >= 3) {
-            const payloadBytes = bigIntToBytes(decodedValue, secretPayloadByteLength);
-            try {
-                const decoded = await decodeSecretPayloadV3(payloadBytes);
-                if (decoded.secretByteLength !== secretByteLength) {
-                    return null;
-                }
-                return decoded.secretText;
-            } catch (e) {
+        const decodedValue = decodeRecoveredSecretValueV3(recovered, secretPayloadByteLength);
+        const payloadBytes = bigIntToBytes(decodedValue, secretPayloadByteLength);
+        try {
+            const decoded = await decodeSecretPayloadV3(payloadBytes);
+            if (decoded.secretByteLength !== secretByteLength) {
                 return null;
             }
-        } else {
-            const secretText = bigIntToSecret(decodedValue, secretByteLength);
-            const isMatch = await checksumMatches(secretText, secretChecksum);
-            if (isMatch) {
-                return secretText;
-            }
+            return decoded.secretText;
+        } catch (e) {
+            return null;
         }
         return null;
     }
@@ -773,19 +694,12 @@ function validateChallengeData(challenge) {
         throw new Error('无效的挑战数据格式');
     }
 
-    const version = challenge.version === undefined ? 1 : challenge.version;
-    if (!Number.isInteger(version) || (version !== 1 && version !== 2 && version !== 3)) {
-        throw new Error('不支持的挑战版本');
+    const version = Number(challenge.version);
+    if (!Number.isInteger(version) || version !== 3) {
+        throw new Error('仅支持 v3 挑战格式');
     }
-
-    if (version === 2) {
-        if (challenge.secretEncoding !== 'offset-base256') {
-            throw new Error('不支持的秘密编码格式');
-        }
-    } else if (version === 3) {
-        if (challenge.secretEncoding !== 'offset-payload-v3') {
-            throw new Error('不支持的秘密编码格式');
-        }
+    if (challenge.secretEncoding !== 'offset-payload-v3') {
+        throw new Error('不支持的秘密编码格式');
     }
 
     const threshold = Number(challenge.threshold);
@@ -798,46 +712,35 @@ function validateChallengeData(challenge) {
         throw new Error('秘密长度字段无效');
     }
 
-    let secretPayloadByteLength = secretByteLength;
-    let secretChecksum = '';
-    let kdf = null;
-
-    if (version === 3) {
-        secretPayloadByteLength = Number(challenge.secretPayloadByteLength);
-        if (!Number.isInteger(secretPayloadByteLength) || secretPayloadByteLength < 22 || secretPayloadByteLength > 70000) {
-            throw new Error('秘密载荷长度字段无效');
-        }
-        if (secretPayloadByteLength !== secretByteLength + 22) {
-            throw new Error('秘密载荷长度字段无效');
-        }
-
-        if (!isPlainObject(challenge.kdf)) {
-            throw new Error('KDF 参数无效');
-        }
-        const kdfType = String(challenge.kdf.type || '');
-        const kdfHash = String(challenge.kdf.hash || '');
-        const kdfIterations = Number(challenge.kdf.iterations);
-        const kdfDkLen = Number(challenge.kdf.dkLen);
-        const kdfSaltLen = Number(challenge.kdf.saltLen);
-        if (kdfType !== 'pbkdf2-sha256' || kdfHash !== 'SHA-256') {
-            throw new Error('KDF 参数无效');
-        }
-        if (!Number.isInteger(kdfIterations) || kdfIterations < 1000 || kdfIterations > 2000000) {
-            throw new Error('KDF 迭代次数无效');
-        }
-        if (!Number.isInteger(kdfDkLen) || kdfDkLen < 16 || kdfDkLen > 64) {
-            throw new Error('KDF 输出长度无效');
-        }
-        if (!Number.isInteger(kdfSaltLen) || kdfSaltLen < 8 || kdfSaltLen > 32) {
-            throw new Error('KDF salt 长度无效');
-        }
-        kdf = { type: kdfType, hash: kdfHash, iterations: kdfIterations, dkLen: kdfDkLen, saltLen: kdfSaltLen };
-    } else {
-        secretChecksum = challenge.secretChecksum;
-        if (typeof secretChecksum !== 'string' || !/^[0-9a-f]{8,64}$/i.test(secretChecksum)) {
-            throw new Error('秘密校验字段无效');
-        }
+    const secretPayloadByteLength = Number(challenge.secretPayloadByteLength);
+    if (!Number.isInteger(secretPayloadByteLength) || secretPayloadByteLength < 22 || secretPayloadByteLength > 70000) {
+        throw new Error('秘密载荷长度字段无效');
     }
+    if (secretPayloadByteLength !== secretByteLength + 22) {
+        throw new Error('秘密载荷长度字段无效');
+    }
+
+    if (!isPlainObject(challenge.kdf)) {
+        throw new Error('KDF 参数无效');
+    }
+    const kdfType = String(challenge.kdf.type || '');
+    const kdfHash = String(challenge.kdf.hash || '');
+    const kdfIterations = Number(challenge.kdf.iterations);
+    const kdfDkLen = Number(challenge.kdf.dkLen);
+    const kdfSaltLen = Number(challenge.kdf.saltLen);
+    if (kdfType !== 'pbkdf2-sha256' || kdfHash !== 'SHA-256') {
+        throw new Error('KDF 参数无效');
+    }
+    if (!Number.isInteger(kdfIterations) || kdfIterations < 1000 || kdfIterations > 2000000) {
+        throw new Error('KDF 迭代次数无效');
+    }
+    if (!Number.isInteger(kdfDkLen) || kdfDkLen < 16 || kdfDkLen > 64) {
+        throw new Error('KDF 输出长度无效');
+    }
+    if (!Number.isInteger(kdfSaltLen) || kdfSaltLen < 8 || kdfSaltLen > 32) {
+        throw new Error('KDF salt 长度无效');
+    }
+    const kdf = { type: kdfType, hash: kdfHash, iterations: kdfIterations, dkLen: kdfDkLen, saltLen: kdfSaltLen };
 
     if (!Array.isArray(challenge.questions) || challenge.questions.length === 0 || challenge.questions.length > 128) {
         throw new Error('题目列表格式无效');
@@ -877,17 +780,13 @@ function validateChallengeData(challenge) {
             throw new Error('题目参数取值无效');
         }
 
-        let salt = '';
-        let saltBytes = null;
-        if (version === 3) {
-            salt = String(q.salt || '');
-            if (!/^[0-9A-Za-z_-]{8,200}$/.test(salt)) {
-                throw new Error('题目 salt 无效');
-            }
-            saltBytes = base64UrlToBytes(salt);
-            if (saltBytes.length !== kdf.saltLen) {
-                throw new Error('题目 salt 无效');
-            }
+        const salt = String(q.salt || '');
+        if (!/^[0-9A-Za-z_-]{8,200}$/.test(salt)) {
+            throw new Error('题目 salt 无效');
+        }
+        const saltBytes = base64UrlToBytes(salt);
+        if (saltBytes.length !== kdf.saltLen) {
+            throw new Error('题目 salt 无效');
         }
 
         for (const prev of usedModuli) {
@@ -912,13 +811,12 @@ function validateChallengeData(challenge) {
 
     return {
         version: version,
-        secretEncoding: version === 2 ? 'offset-base256' : (version === 3 ? 'offset-payload-v3' : undefined),
+        secretEncoding: 'offset-payload-v3',
         title: typeof challenge.title === 'string' ? challenge.title : '秘密挑战',
         description: typeof challenge.description === 'string' ? challenge.description : '',
         threshold: threshold,
         secretByteLength: secretByteLength,
         secretPayloadByteLength: secretPayloadByteLength,
-        secretChecksum: secretChecksum ? secretChecksum.toLowerCase() : '',
         kdf: kdf,
         questions: normalizedQuestions,
         createdAt: typeof challenge.createdAt === 'string' ? challenge.createdAt : '',
