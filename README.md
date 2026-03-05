@@ -26,6 +26,14 @@ python3 -m http.server 8000
 2. Share a challenge: copy a self-contained link or export JSON.
 3. Solve a challenge: import link/JSON, answer questions, and unlock.
 
+### Multiple acceptable answers (per question)
+
+When creating a challenge, each question can accept multiple valid answers: separate variants with newlines or `|`. Examples:
+
+- `42|fourty two` (typo example)
+- `42|forty two`
+- Put `42` and `四十二` on separate lines
+
 ## Technical Notes
 
 - Pure HTML/CSS/JavaScript, no external dependencies
@@ -43,5 +51,6 @@ python3 -m http.server 8000
 ### Important limitations
 
 - Weak/guessable answers are vulnerable to offline dictionary attacks. PBKDF2 hardening slows guessing down, but does not prevent it.
+- Allowing multiple valid answers per question reduces the difficulty of “guessing any acceptable variant”; keep variants minimal and non-obvious.
 - Use a high-entropy secret if you need real confidentiality (e.g. append a random suffix), and prefer higher thresholds.
 - Mignotte/CRT is not Shamir secret sharing and does not provide perfect secrecy; do not treat this tool as a substitute for vetted cryptographic secret sharing.

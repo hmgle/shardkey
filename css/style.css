@@ -163,6 +163,10 @@ textarea {
     min-height: 80px;
 }
 
+.question-item textarea.q-answer {
+    min-height: 44px;
+}
+
 .form-group {
     margin-bottom: 16px;
 }
