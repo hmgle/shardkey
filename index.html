@@ -58,7 +58,7 @@
                 <div class="form-row">
                     <div class="form-group">
                         <label for="threshold-input">门限值</label>
-                        <input type="number" id="threshold-input" min="2" value="3">
+                        <input type="number" id="threshold-input" min="2" max="64" value="3">
                         <div class="form-hint">需要正确回答的最少问题数。值越大越安全，但也要求回答者知道更多答案。</div>
                     </div>
                     <div class="form-group">
@@ -94,6 +94,7 @@
                     </div>
                     <button class="btn btn-secondary" id="btn-paste-link">粘贴链接</button>
                 </div>
+                <div id="solve-load-error" class="hidden"></div>
                 <div id="paste-link-area" class="hidden" style="margin-top: 12px;">
                     <textarea id="paste-link-input" placeholder="粘贴包含挑战数据的链接..." style="min-height: 50px;"></textarea>
                     <button class="btn btn-primary" id="btn-load-link" style="margin-top: 8px;">加载</button>

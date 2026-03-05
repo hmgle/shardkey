@@ -50,5 +50,6 @@ Answer text can contain any characters (including `|`). The app no longer uses s
 
 - Weak/guessable answers are vulnerable to offline dictionary attacks. PBKDF2 hardening slows guessing down, but does not prevent it.
 - Allowing multiple valid answers per question reduces the difficulty of “guessing any acceptable variant”; keep variants minimal and non-obvious.
+- For robustness, the app enforces practical size limits (currently: secret ≤ 1024 bytes, questions ≤ 64, threshold ≤ 64). Larger challenges should be split up.
 - Use a high-entropy secret if you need real confidentiality (e.g. append a random suffix), and prefer higher thresholds.
 - Mignotte/CRT is not Shamir secret sharing and does not provide perfect secrecy; do not treat this tool as a substitute for vetted cryptographic secret sharing.
