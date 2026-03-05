@@ -4,6 +4,22 @@
 (function () {
 'use strict';
 
+var i18n = (typeof window !== 'undefined' && window.ShardKeyI18n) ? window.ShardKeyI18n : null;
+function t(key, params) {
+    if (i18n && typeof i18n.t === 'function') return i18n.t(key, params);
+    var out = String(key);
+    if (params && typeof params === 'object') {
+        Object.keys(params).forEach(function (k) {
+            out = out.replace(new RegExp('\\{' + k + '\\}', 'g'), String(params[k]));
+        });
+    }
+    return out;
+}
+function getLocaleForIntl() {
+    if (i18n && typeof i18n.getLocaleForIntl === 'function') return i18n.getLocaleForIntl();
+    return 'zh-CN';
+}
+
 // =====================================================================
 // limits.js — 安全稳健的输入边界
 // =====================================================================
@@ -63,8 +79,8 @@ function modPow(base, exp, mod) {
 
 function solveCRT(remainders, moduli) {
     const k = remainders.length;
-    if (k === 0) throw new Error('至少需要一组余数和模数');
-    if (k !== moduli.length) throw new Error('余数和模数数组长度不匹配');
+    if (k === 0) throw new Error(t('errors.crt.min_pairs'));
+    if (k !== moduli.length) throw new Error(t('errors.crt.length_mismatch'));
 
     let M = 1n;
     for (let i = 0; i < k; i++) {
@@ -123,7 +139,7 @@ function getSecureRandomBigInt(bits) {
 }
 
 function getSecureRandomBigIntInRange(min, max) {
-    if (max < min) throw new Error('随机范围无效');
+    if (max < min) throw new Error(t('errors.random.invalid_range'));
     if (max === min) return min;
 
     const span = max - min + 1n;
@@ -284,10 +300,10 @@ function bytesToBase64Url(bytes) {
 
 function base64UrlToBytes(base64url) {
     if (typeof base64url !== 'string' || base64url.length === 0 || base64url.length > LIMITS.maxBase64UrlChars) {
-        throw new Error('Base64Url 字段无效');
+        throw new Error(t('errors.base64url.invalid_field'));
     }
     if (!/^[0-9A-Za-z_-]+$/.test(base64url)) {
-        throw new Error('Base64Url 字段无效');
+        throw new Error(t('errors.base64url.invalid_field'));
     }
     let base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
     while (base64.length % 4 !== 0) {
@@ -304,7 +320,7 @@ function base64UrlToBytes(base64url) {
 async function encodeSecretPayloadV3(secretText) {
     const secretBytes = new TextEncoder().encode(secretText);
     if (secretBytes.length > LIMITS.maxSecretBytes) {
-        throw new Error('秘密过长（最多 ' + LIMITS.maxSecretBytes + ' 字节）');
+        throw new Error(t('errors.secret.too_long_bytes', { max: LIMITS.maxSecretBytes }));
     }
 
     const checksumBytes = (await sha256Bytes(secretBytes)).slice(0, 16);
@@ -327,20 +343,20 @@ async function encodeSecretPayloadV3(secretText) {
 
 async function decodeSecretPayloadV3(payloadBytes) {
     if (!(payloadBytes instanceof Uint8Array)) {
-        throw new Error('秘密载荷格式无效');
+        throw new Error(t('errors.secret.payload.invalid_format'));
     }
     const minLen = 4 + 2 + 16;
     if (payloadBytes.length < minLen) {
-        throw new Error('秘密载荷长度无效');
+        throw new Error(t('errors.secret.payload.length_invalid'));
     }
     if (payloadBytes[0] !== 0x53 || payloadBytes[1] !== 0x4b || payloadBytes[2] !== 0x33 || payloadBytes[3] !== 0x00) {
-        throw new Error('秘密载荷标记无效');
+        throw new Error(t('errors.secret.payload.marker_invalid'));
     }
     const secretLen = (payloadBytes[4] << 8) | payloadBytes[5];
     const checksumLen = 16;
     const expectedLen = 4 + 2 + secretLen + checksumLen;
     if (expectedLen !== payloadBytes.length) {
-        throw new Error('秘密载荷长度不匹配');
+        throw new Error(t('errors.secret.payload.length_mismatch'));
     }
     const secretBytes = payloadBytes.slice(6, 6 + secretLen);
     const checksumBytes = payloadBytes.slice(6 + secretLen);
@@ -348,7 +364,7 @@ async function decodeSecretPayloadV3(payloadBytes) {
     const computed = (await sha256Bytes(secretBytes)).slice(0, checksumLen);
     for (let i = 0; i < checksumLen; i++) {
         if (computed[i] !== checksumBytes[i]) {
-            throw new Error('秘密载荷校验失败');
+            throw new Error(t('errors.secret.payload.checksum_failed'));
         }
     }
 
@@ -370,13 +386,13 @@ function challengeToBase64(obj) {
 
 function challengeFromBase64(base64url) {
     if (typeof base64url !== 'string' || base64url.length === 0) {
-        throw new Error('链接挑战数据无效');
+        throw new Error(t('errors.link.invalid_data'));
     }
     if (base64url.length > LIMITS.maxUrlHashChars) {
-        throw new Error('链接挑战数据过长，请改用 JSON 文件分享/导入');
+        throw new Error(t('errors.link.too_long_use_json'));
     }
     if (!/^[0-9A-Za-z_-]+$/.test(base64url)) {
-        throw new Error('链接挑战数据无效');
+        throw new Error(t('errors.link.invalid_data'));
     }
     let base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
     while (base64.length % 4 !== 0) {
@@ -393,7 +409,16 @@ function challengeFromBase64(base64url) {
 
 function challengeToURL(obj) {
     const base64 = challengeToBase64(obj);
-    const baseURL = window.location.href.split('#')[0];
+    let baseURL = window.location.href.split('#')[0];
+    try {
+        const url = new URL(baseURL);
+        if (i18n && typeof i18n.getLang === 'function') {
+            url.searchParams.set('lang', i18n.getLang());
+            baseURL = url.toString();
+        }
+    } catch (e) {
+        // ignore
+    }
     return baseURL + '#' + base64;
 }
 
@@ -414,12 +439,12 @@ function parseChallengeFromURLDetailed() {
     const hash = window.location.hash;
     if (!hash || hash.length < 2) return { challenge: null, error: null };
     if (hash.length - 1 > LIMITS.maxUrlHashChars) {
-        return { challenge: null, error: '链接挑战数据过长，请改用 JSON 文件分享/导入。' };
+        return { challenge: null, error: t('errors.link.too_long_use_json') };
     }
     try {
         return { challenge: challengeFromBase64(hash.substring(1)), error: null };
     } catch (e) {
-        return { challenge: null, error: e.message || '链接解析失败' };
+        return { challenge: null, error: e.message || t('errors.link.parse_failed') };
     }
 }
 
@@ -439,11 +464,11 @@ function challengeToFile(obj, filename) {
 function challengeFromFile(file) {
     return new Promise(function (resolve, reject) {
         if (!file || typeof file.size !== 'number') {
-            reject(new Error('无效的挑战文件'));
+            reject(new Error(t('errors.file.invalid')));
             return;
         }
         if (file.size > LIMITS.maxChallengeFileBytes) {
-            reject(new Error('挑战文件过大（' + file.size + ' 字节），请减少题目数量/秘密长度后重试'));
+            reject(new Error(t('errors.file.too_large', { size: file.size })));
             return;
         }
         const reader = new FileReader();
@@ -451,10 +476,10 @@ function challengeFromFile(file) {
             try {
                 resolve(JSON.parse(reader.result));
             } catch (e) {
-                reject(new Error('无效的挑战文件格式'));
+                reject(new Error(t('errors.file.invalid_format')));
             }
         };
-        reader.onerror = function () { reject(new Error('读取文件失败')); };
+        reader.onerror = function () { reject(new Error(t('errors.file.read_failed'))); };
         reader.readAsText(file);
     });
 }
@@ -487,7 +512,7 @@ function chooseEncodedSecret(rawSecretValue, byteLength, alpha, beta) {
     const base = getSecretValueBase(byteLength);
     const upper = alpha - 1n;
     if (upper < rawSecretValue) {
-        throw new Error('秘密过大，无法编码到当前门限区间。');
+        throw new Error(t('errors.secret.too_large_for_threshold'));
     }
 
     let kMin = 0n;
@@ -496,7 +521,7 @@ function chooseEncodedSecret(rawSecretValue, byteLength, alpha, beta) {
     }
     const kMax = (upper - rawSecretValue) / base;
     if (kMax < kMin) {
-        throw new Error('无法为当前秘密构造安全门限区间。请提高门限值或减少问题数量。');
+        throw new Error(t('errors.secret.cannot_construct_interval'));
     }
 
     const k = getSecureRandomBigIntInRange(kMin, kMax);
@@ -510,11 +535,11 @@ function decodeRecoveredSecretValueV3(recovered, secretPayloadByteLength) {
 }
 
 async function generateChallenge(secret, questions, threshold, title, description, onProgress) {
-    if (!secret) throw new Error('秘密不能为空');
+    if (!secret) throw new Error(t('errors.secret.empty'));
     if (questions.length < threshold) {
-        throw new Error('问题数量 (' + questions.length + ') 不能少于门限值 (' + threshold + ')');
+        throw new Error(t('errors.questions.less_than_threshold', { count: questions.length, threshold: threshold }));
     }
-    if (threshold < 2) throw new Error('门限值至少为 2');
+    if (threshold < 2) throw new Error(t('errors.threshold.min2'));
 
     const payload = await encodeSecretPayloadV3(secret);
     const rawSecretValue = payload.value;
@@ -531,9 +556,9 @@ async function generateChallenge(secret, questions, threshold, title, descriptio
     const maxAttempts = 8;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         const bitSizeForAttempt = modBits + attempt * 2;
-        if (onProgress) onProgress('正在生成素数模数...', 0, questions.length);
+        if (onProgress) onProgress(t('progress.generating_moduli'), 0, questions.length);
         moduli = await generateModuli(questions.length, bitSizeForAttempt, function (done, total) {
-            if (onProgress) onProgress('正在生成素数模数...', done, total);
+            if (onProgress) onProgress(t('progress.generating_moduli'), done, total);
         });
 
         const bounds = calculateMignotteBounds(moduli, threshold);
@@ -556,7 +581,7 @@ async function generateChallenge(secret, questions, threshold, title, descriptio
     }
 
     if (!moduli || encodedSecret === null) {
-        throw new Error('生成挑战失败，请重试。');
+        throw new Error(t('errors.challenge.generate_failed'));
     }
 
     const kdf = {
@@ -567,7 +592,7 @@ async function generateChallenge(secret, questions, threshold, title, descriptio
         saltLen: 16,
     };
 
-    if (onProgress) onProgress('正在计算 XOR 掩码...', 0, questions.length);
+    if (onProgress) onProgress(t('progress.computing_xor_mask'), 0, questions.length);
     const questionEntries = [];
     for (let i = 0; i < questions.length; i++) {
         const q = questions[i];
@@ -576,10 +601,10 @@ async function generateChallenge(secret, questions, threshold, title, descriptio
 
         const answerOptions = Array.isArray(q.answers) ? q.answers : [q.answer];
         if (answerOptions.length === 0 || !answerOptions.some(function (a) { return String(a || '').trim(); })) {
-            throw new Error('第 ' + (i + 1) + ' 个问题缺少答案');
+            throw new Error(t('errors.question.missing_answer', { n: i + 1 }));
         }
         if (answerOptions.length > 16) {
-            throw new Error('第 ' + (i + 1) + ' 个问题答案过多（最多 16 个）');
+            throw new Error(t('errors.question.too_many_answers', { n: i + 1, max: 16 }));
         }
 
         const saltBytes = getSecureRandomBytes(kdf.saltLen);
@@ -593,7 +618,7 @@ async function generateChallenge(secret, questions, threshold, title, descriptio
             xorValues.push(xorValue.toString());
         }
         if (xorValues.length === 0) {
-            throw new Error('第 ' + (i + 1) + ' 个问题缺少答案');
+            throw new Error(t('errors.question.missing_answer', { n: i + 1 }));
         }
 
         questionEntries.push({
@@ -606,7 +631,7 @@ async function generateChallenge(secret, questions, threshold, title, descriptio
             salt: bytesToBase64Url(saltBytes),
         });
 
-        if (onProgress) onProgress('正在计算 XOR 掩码...', i + 1, questions.length);
+        if (onProgress) onProgress(t('progress.computing_xor_mask'), i + 1, questions.length);
         if ((i + 1) % 4 === 0) {
             await yieldToUI();
         }
@@ -615,8 +640,8 @@ async function generateChallenge(secret, questions, threshold, title, descriptio
     return {
         version: 3,
         secretEncoding: 'offset-payload-v3',
-        title: title || '秘密挑战',
-        description: description || '回答问题来获取秘密！',
+        title: title || t('defaults.challenge_title'),
+        description: description || t('defaults.challenge_desc'),
         threshold: threshold,
         secretByteLength: secretByteLength,
         secretPayloadByteLength: payloadByteLength,
@@ -647,7 +672,7 @@ async function recoverSecret(challenge, answers) {
     if (answeredCount < threshold) {
         return {
             success: false,
-            error: '需要至少回答 ' + threshold + ' 个问题，当前只回答了 ' + answeredCount + ' 个。',
+            error: t('errors.solver.need_at_least', { threshold: threshold, answered: answeredCount }),
             answeredCount: answeredCount,
         };
     }
@@ -782,7 +807,7 @@ async function recoverSecret(challenge, answers) {
                 return { success: true, secret: secretText, answeredCount: answeredCount, usedCount: threshold };
             }
         } catch (e) {
-            return { success: false, error: '求解失败：' + e.message, answeredCount: answeredCount };
+            return { success: false, error: t('errors.solver.failed_prefix', { msg: e.message }), answeredCount: answeredCount };
         }
     } else {
         const n = entries.length;
@@ -833,12 +858,12 @@ async function recoverSecret(challenge, answers) {
 
     const suffix = truncated
         ? (truncatedReason === 'time'
-            ? '（求解超时，可尝试减少填写的答案数量后重试）'
-            : '（已达到求解上限，可尝试减少填写的答案数量后重试）')
+            ? t('errors.solver.timeout_suffix')
+            : t('errors.solver.limit_suffix'))
         : '';
     return {
         success: false,
-        error: '验证失败——部分答案可能不正确。请检查答案后重试。' + suffix,
+        error: t('errors.solver.verify_failed', { suffix: suffix }),
         answeredCount: answeredCount,
         testedSubsets: testedSubsets,
         testedCombos: testedCombos,
@@ -851,33 +876,33 @@ function isPlainObject(value) {
 
 function validateChallengeData(challenge) {
     if (!isPlainObject(challenge)) {
-        throw new Error('无效的挑战数据格式');
+        throw new Error(t('errors.challenge.invalid_format'));
     }
 
     const version = Number(challenge.version);
     if (!Number.isInteger(version) || version !== 3) {
-        throw new Error('仅支持 v3 挑战格式');
+        throw new Error(t('errors.challenge.only_v3'));
     }
     if (challenge.secretEncoding !== 'offset-payload-v3') {
-        throw new Error('不支持的秘密编码格式');
+        throw new Error(t('errors.challenge.unsupported_secret_encoding'));
     }
 
     const threshold = Number(challenge.threshold);
     if (!Number.isInteger(threshold) || threshold < 2 || threshold > LIMITS.maxThreshold) {
-        throw new Error('门限值格式无效');
+        throw new Error(t('errors.challenge.threshold_invalid_format'));
     }
 
     const secretByteLength = Number(challenge.secretByteLength);
     if (!Number.isInteger(secretByteLength) || secretByteLength < 0 || secretByteLength > LIMITS.maxSecretBytes) {
-        throw new Error('秘密长度字段无效');
+        throw new Error(t('errors.challenge.secret_length_field_invalid'));
     }
 
     const secretPayloadByteLength = Number(challenge.secretPayloadByteLength);
     if (!Number.isInteger(secretPayloadByteLength) || secretPayloadByteLength < 22 || secretPayloadByteLength > LIMITS.maxSecretBytes + 22) {
-        throw new Error('秘密载荷长度字段无效');
+        throw new Error(t('errors.challenge.secret_payload_length_field_invalid'));
     }
     if (secretPayloadByteLength !== secretByteLength + 22) {
-        throw new Error('秘密载荷长度字段无效');
+        throw new Error(t('errors.challenge.secret_payload_length_field_invalid'));
     }
 
     const expectedSecretBits = Math.max(1, secretPayloadByteLength * 8);
@@ -885,7 +910,7 @@ function validateChallengeData(challenge) {
     const allowedModBits = expectedModBits + 256;
 
     if (!isPlainObject(challenge.kdf)) {
-        throw new Error('KDF 参数无效');
+        throw new Error(t('errors.challenge.kdf_invalid'));
     }
     const kdfType = String(challenge.kdf.type || '');
     const kdfHash = String(challenge.kdf.hash || '');
@@ -893,83 +918,83 @@ function validateChallengeData(challenge) {
     const kdfDkLen = Number(challenge.kdf.dkLen);
     const kdfSaltLen = Number(challenge.kdf.saltLen);
     if (kdfType !== 'pbkdf2-sha256' || kdfHash !== 'SHA-256') {
-        throw new Error('KDF 参数无效');
+        throw new Error(t('errors.challenge.kdf_invalid'));
     }
     if (!Number.isInteger(kdfIterations) || kdfIterations < 1000 || kdfIterations > 2000000) {
-        throw new Error('KDF 迭代次数无效');
+        throw new Error(t('errors.challenge.kdf_iterations_invalid'));
     }
     if (!Number.isInteger(kdfDkLen) || kdfDkLen < 16 || kdfDkLen > 64) {
-        throw new Error('KDF 输出长度无效');
+        throw new Error(t('errors.challenge.kdf_dklen_invalid'));
     }
     if (!Number.isInteger(kdfSaltLen) || kdfSaltLen < 8 || kdfSaltLen > 32) {
-        throw new Error('KDF salt 长度无效');
+        throw new Error(t('errors.challenge.kdf_saltlen_invalid'));
     }
     const kdf = { type: kdfType, hash: kdfHash, iterations: kdfIterations, dkLen: kdfDkLen, saltLen: kdfSaltLen };
 
     if (!Array.isArray(challenge.questions) || challenge.questions.length === 0 || challenge.questions.length > LIMITS.maxQuestions) {
-        throw new Error('题目列表格式无效');
+        throw new Error(t('errors.challenge.questions_list_invalid'));
     }
     if (challenge.questions.length < threshold) {
-        throw new Error('题目数量少于门限值');
+        throw new Error(t('errors.challenge.question_count_below_threshold'));
     }
 
     const seenIds = new Set();
     const usedModuli = [];
     const normalizedQuestions = challenge.questions.map(function (q) {
         if (!isPlainObject(q)) {
-            throw new Error('题目字段格式无效');
+            throw new Error(t('errors.challenge.question_field_invalid'));
         }
 
         const id = Number(q.id);
         if (!Number.isInteger(id) || id < 0) {
-            throw new Error('题目 ID 无效');
+            throw new Error(t('errors.challenge.question_id_invalid'));
         }
         if (seenIds.has(id)) {
-            throw new Error('题目 ID 重复');
+            throw new Error(t('errors.challenge.question_id_duplicate'));
         }
         seenIds.add(id);
 
         const text = typeof q.text === 'string' ? q.text : '';
         const hint = typeof q.hint === 'string' ? q.hint : '';
-        if (text.length > LIMITS.maxQuestionTextChars) throw new Error('题目内容过长');
-        if (hint.length > LIMITS.maxHintChars) throw new Error('题目提示过长');
+        if (text.length > LIMITS.maxQuestionTextChars) throw new Error(t('errors.challenge.question_text_too_long'));
+        if (hint.length > LIMITS.maxHintChars) throw new Error(t('errors.challenge.question_hint_too_long'));
 
         const modulusStr = String(q.modulus || '');
         if (!/^\d+$/.test(modulusStr) || modulusStr.length > LIMITS.maxBigIntDigits) {
-            throw new Error('题目参数格式无效');
+            throw new Error(t('errors.challenge.question_params_invalid_format'));
         }
         const modulusBigInt = BigInt(modulusStr);
         if (modulusBigInt <= 2n) {
-            throw new Error('题目参数取值无效');
+            throw new Error(t('errors.challenge.question_params_invalid_value'));
         }
         const modulusBits = modulusBigInt.toString(2).length;
         if (modulusBits > allowedModBits) {
-            throw new Error('题目参数取值无效');
+            throw new Error(t('errors.challenge.question_params_invalid_value'));
         }
 
         function parseVariant(rawVariant) {
             if (!isPlainObject(rawVariant)) {
-                throw new Error('题目参数格式无效');
+                throw new Error(t('errors.challenge.question_params_invalid_format'));
             }
             const xorValueStr = String(rawVariant.xorValue || '');
             if (!/^\d+$/.test(xorValueStr) || xorValueStr.length > LIMITS.maxBigIntDigits) {
-                throw new Error('题目参数格式无效');
+                throw new Error(t('errors.challenge.question_params_invalid_format'));
             }
             const xorValueBigInt = BigInt(xorValueStr);
             if (xorValueBigInt < 0n) {
-                throw new Error('题目参数取值无效');
+                throw new Error(t('errors.challenge.question_params_invalid_value'));
             }
             const xorBits = xorValueBigInt === 0n ? 1 : xorValueBigInt.toString(2).length;
             if (xorBits > modulusBits) {
-                throw new Error('题目参数取值无效');
+                throw new Error(t('errors.challenge.question_params_invalid_value'));
             }
             const salt = String(rawVariant.salt || '');
             if (!/^[0-9A-Za-z_-]{8,200}$/.test(salt)) {
-                throw new Error('题目 salt 无效');
+                throw new Error(t('errors.challenge.question_salt_invalid'));
             }
             const saltBytes = base64UrlToBytes(salt);
             if (saltBytes.length !== kdf.saltLen) {
-                throw new Error('题目 salt 无效');
+                throw new Error(t('errors.challenge.question_salt_invalid'));
             }
             return {
                 xorValue: xorValueBigInt.toString(),
@@ -987,37 +1012,37 @@ function validateChallengeData(challenge) {
 
         if (Array.isArray(q.xorValues) && q.xorValues.length > 0) {
             if (q.xorValues.length > 16) {
-                throw new Error('单题答案变体过多（最多 16 个）');
+                throw new Error(t('errors.challenge.too_many_variants', { max: 16 }));
             }
             const xorValueStrs = q.xorValues.map(function (v) { return String(v || ''); });
             for (const xvs of xorValueStrs) {
                 if (!/^\d+$/.test(xvs) || xvs.length > LIMITS.maxBigIntDigits) {
-                    throw new Error('题目参数格式无效');
+                    throw new Error(t('errors.challenge.question_params_invalid_format'));
                 }
             }
             xorValuesBigInt = xorValueStrs.map(function (s) { return BigInt(s); });
             for (const xvb of xorValuesBigInt) {
                 if (xvb < 0n) {
-                    throw new Error('题目参数取值无效');
+                    throw new Error(t('errors.challenge.question_params_invalid_value'));
                 }
                 const xorBits = xvb === 0n ? 1 : xvb.toString(2).length;
                 if (xorBits > modulusBits) {
-                    throw new Error('题目参数取值无效');
+                    throw new Error(t('errors.challenge.question_params_invalid_value'));
                 }
             }
             xorValueBigInt = xorValuesBigInt[0];
 
             salt = String(q.salt || '');
             if (!/^[0-9A-Za-z_-]{8,200}$/.test(salt)) {
-                throw new Error('题目 salt 无效');
+                throw new Error(t('errors.challenge.question_salt_invalid'));
             }
             saltBytes = base64UrlToBytes(salt);
             if (saltBytes.length !== kdf.saltLen) {
-                throw new Error('题目 salt 无效');
+                throw new Error(t('errors.challenge.question_salt_invalid'));
             }
         } else if (Array.isArray(q.variants)) {
             if (q.variants.length === 0 || q.variants.length > 16) {
-                throw new Error('题目答案变体数量无效');
+                throw new Error(t('errors.challenge.answer_variants_count_invalid'));
             }
             variants = q.variants.map(parseVariant);
             xorValueBigInt = variants[0].xorValueBigInt;
@@ -1033,7 +1058,7 @@ function validateChallengeData(challenge) {
 
         for (const prev of usedModuli) {
             if (gcd(prev, modulusBigInt) !== 1n) {
-                throw new Error('模数不是两两互素');
+                throw new Error(t('errors.challenge.moduli_not_coprime'));
             }
         }
         usedModuli.push(modulusBigInt);
@@ -1054,15 +1079,15 @@ function validateChallengeData(challenge) {
         };
     });
 
-    const title = typeof challenge.title === 'string' ? challenge.title : '秘密挑战';
+    const title = typeof challenge.title === 'string' ? challenge.title : t('defaults.challenge_title');
     const description = typeof challenge.description === 'string' ? challenge.description : '';
-    if (title.length > LIMITS.maxTitleChars) throw new Error('挑战标题过长');
-    if (description.length > LIMITS.maxDescChars) throw new Error('挑战描述过长');
+    if (title.length > LIMITS.maxTitleChars) throw new Error(t('errors.challenge.title_too_long'));
+    if (description.length > LIMITS.maxDescChars) throw new Error(t('errors.challenge.desc_too_long'));
 
     const allModuli = normalizedQuestions.map(function (q) { return q.modulusBigInt; });
     const bounds = calculateMignotteBounds(allModuli, threshold);
     if (bounds.alpha <= bounds.beta) {
-        throw new Error('挑战参数无效（模数无法满足门限区间约束）');
+        throw new Error(t('errors.challenge.params_invalid_moduli_bounds'));
     }
 
     return {
@@ -1136,6 +1161,45 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+var langSelectEl = document.getElementById('lang-select');
+var lastGeneratedState = null;
+
+function applyStaticI18n() {
+    document.querySelectorAll('[data-i18n]').forEach(function (el) {
+        var key = el.getAttribute('data-i18n');
+        if (!key) return;
+        el.textContent = t(key);
+    });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(function (el) {
+        var key2 = el.getAttribute('data-i18n-placeholder');
+        if (!key2) return;
+        el.setAttribute('placeholder', t(key2));
+    });
+}
+
+function syncLangSelect() {
+    if (!langSelectEl) return;
+    if (i18n && typeof i18n.getLang === 'function') {
+        langSelectEl.value = i18n.getLang();
+    }
+    langSelectEl.setAttribute('aria-label', t('ui.language'));
+}
+
+function rerenderAll() {
+    applyStaticI18n();
+    checkRuntimeSupport();
+    renderQuestions();
+    if (lastGeneratedState) {
+        renderGenerateResult(lastGeneratedState);
+    }
+    if (currentChallenge) {
+        renderSolveChallenge(currentChallenge, true);
+    }
+    if (btnSolve && btnSolve.disabled) {
+        btnSolve.textContent = t('solve.solving');
+    }
+}
+
 function setRuntimeWarning(messageHtml) {
     if (!runtimeWarningEl) return;
     if (!messageHtml) {
@@ -1163,13 +1227,30 @@ function checkRuntimeSupport() {
 
     setRuntimeWarning(
         '<div class="result-box warning">' +
-            '<div class="result-label">运行环境不支持</div>' +
+            '<div class="result-label">' + escapeHtml(t('runtime.not_supported.title')) + '</div>' +
             '<p style="font-size: 0.9em; color: var(--text-secondary);">' +
-                '当前浏览器缺少必要能力：' + escapeHtml(missing.join(', ')) + '。' +
-                '建议使用最新版 Chrome / Edge / Firefox，并尽量通过本地静态服务打开（例如 <code>python3 -m http.server 8000</code>）。' +
+                escapeHtml(t('runtime.not_supported.missing', { missing: missing.join(', ') })) +
+                ' ' +
+                escapeHtml(t('runtime.not_supported.before_example')) +
+                '<code>python3 -m http.server 8000</code>' +
+                escapeHtml(t('runtime.not_supported.after_example')) +
             '</p>' +
         '</div>'
     );
+}
+
+function initI18nUI() {
+    syncLangSelect();
+    if (langSelectEl && i18n && typeof i18n.setLang === 'function') {
+        langSelectEl.addEventListener('change', function () { i18n.setLang(langSelectEl.value); });
+    }
+    if (i18n && typeof i18n.onChange === 'function') {
+        i18n.onChange(function () {
+            syncLangSelect();
+            rerenderAll();
+        });
+    }
+    rerenderAll();
 }
 
 async function copyFromTextarea(textarea) {
@@ -1211,7 +1292,11 @@ function showSolveLoadError(msg) {
         return;
     }
     el.classList.remove('hidden');
-    el.innerHTML = '<div class="result-box error"><div class="result-label">加载失败</div><p>' + escapeHtml(msg) + '</p></div>';
+    el.innerHTML =
+        '<div class="result-box error">' +
+            '<div class="result-label">' + escapeHtml(t('ui.load_failed.title')) + '</div>' +
+            '<p>' + escapeHtml(msg) + '</p>' +
+        '</div>';
 }
 
 function addQuestion(text, answer, hint) {
@@ -1250,34 +1335,37 @@ function renderQuestions() {
 
         var answersHtml = '';
         q.answers.forEach(function (ans, ansIdx) {
+            var answerPlaceholder = q.answers.length > 1
+                ? t('create.answer.placeholder_indexed', { n: ansIdx + 1 })
+                : t('create.answer.placeholder_single');
             var removeAnsBtn = q.answers.length > 1
-                ? '<button class="btn-remove-answer" data-id="' + q.id + '" data-aidx="' + ansIdx + '">删除</button>'
+                ? '<button class="btn-remove-answer" data-id="' + q.id + '" data-aidx="' + ansIdx + '">' + escapeHtml(t('create.answer.delete')) + '</button>'
                 : '';
             answersHtml +=
                 '<div class="answer-row">' +
-                    '<input type="text" class="q-answer" data-id="' + q.id + '" data-aidx="' + ansIdx + '" value="' + escapeHtml(ans) + '" placeholder="答案' + (q.answers.length > 1 ? ' ' + (ansIdx + 1) : '') + '（大小写不敏感）">' +
+                    '<input type="text" class="q-answer" data-id="' + q.id + '" data-aidx="' + ansIdx + '" value="' + escapeHtml(ans) + '" placeholder="' + escapeHtml(answerPlaceholder) + '">' +
                     removeAnsBtn +
                 '</div>';
         });
 
         div.innerHTML =
             '<div class="question-header">' +
-                '<span class="question-number">问题 ' + (index + 1) + '</span>' +
-                '<button class="btn-remove" data-id="' + q.id + '">删除</button>' +
+                '<span class="question-number">' + escapeHtml(t('create.question.number', { n: index + 1 })) + '</span>' +
+                '<button class="btn-remove" data-id="' + q.id + '">' + escapeHtml(t('create.question.delete')) + '</button>' +
             '</div>' +
             '<div class="form-group">' +
-                '<label>问题内容</label>' +
-                '<input type="text" class="q-text" data-id="' + q.id + '" value="' + escapeHtml(q.question) + '" placeholder="例如：我的猫叫什么名字？">' +
+                '<label>' + escapeHtml(t('create.question.text.label')) + '</label>' +
+                '<input type="text" class="q-text" data-id="' + q.id + '" value="' + escapeHtml(q.question) + '" placeholder="' + escapeHtml(t('create.question.text.placeholder')) + '">' +
             '</div>' +
             '<div class="form-row">' +
                 '<div class="form-group answers-group">' +
-                    '<label>正确答案</label>' +
+                    '<label>' + escapeHtml(t('create.answers.label')) + '</label>' +
                     '<div class="answers-list">' + answersHtml + '</div>' +
-                    '<button class="btn-add-answer btn btn-secondary" data-id="' + q.id + '">+ 添加备选答案</button>' +
+                    '<button class="btn-add-answer btn btn-secondary" data-id="' + q.id + '">' + escapeHtml(t('create.answers.add_alt')) + '</button>' +
                 '</div>' +
                 '<div class="form-group">' +
-                    '<label>提示（可选）</label>' +
-                    '<input type="text" class="q-hint" data-id="' + q.id + '" value="' + escapeHtml(q.hint) + '" placeholder="给求解者的提示">' +
+                    '<label>' + escapeHtml(t('create.hint.label')) + '</label>' +
+                    '<input type="text" class="q-hint" data-id="' + q.id + '" value="' + escapeHtml(q.hint) + '" placeholder="' + escapeHtml(t('create.hint.placeholder')) + '">' +
                 '</div>' +
             '</div>';
         questionList.appendChild(div);
@@ -1348,22 +1436,23 @@ addQuestion();
 addQuestion();
 addQuestion();
 
-checkRuntimeSupport();
+initI18nUI();
 
 btnGenerate.addEventListener('click', async function () {
+    lastGeneratedState = null;
     var secret = secretInput.value.trim();
     if (!secret) {
-        showGenerateError('请输入要分享的秘密。');
+        showGenerateError(t('validation.secret.required'));
         return;
     }
     try {
         var secretBytes = new TextEncoder().encode(secret);
         if (secretBytes.length > LIMITS.maxSecretBytes) {
-            showGenerateError('秘密过长（最多 ' + LIMITS.maxSecretBytes + ' 字节）。');
+            showGenerateError(t('validation.secret.too_long', { max: LIMITS.maxSecretBytes }));
             return;
         }
     } catch (e) {
-        showGenerateError('秘密编码失败，请检查输入内容。');
+        showGenerateError(t('validation.secret.encode_failed'));
         return;
     }
 
@@ -1371,45 +1460,45 @@ btnGenerate.addEventListener('click', async function () {
         return q.question.trim() && q.answers.some(function (a) { return a.trim(); });
     });
     if (validQuestions.length < 2) {
-        showGenerateError('请至少设置 2 个包含问题和答案的问题。');
+        showGenerateError(t('validation.questions.min2'));
         return;
     }
     if (validQuestions.length > LIMITS.maxQuestions) {
-        showGenerateError('问题数量过多（最多 ' + LIMITS.maxQuestions + ' 个）。');
+        showGenerateError(t('validation.questions.too_many', { max: LIMITS.maxQuestions }));
         return;
     }
     var titleCandidate = challengeTitleEl.value.trim();
     var descCandidate = challengeDescEl.value.trim();
     if (titleCandidate.length > LIMITS.maxTitleChars) {
-        showGenerateError('挑战标题过长（最多 ' + LIMITS.maxTitleChars + ' 字符）。');
+        showGenerateError(t('validation.title.too_long', { max: LIMITS.maxTitleChars }));
         return;
     }
     if (descCandidate.length > LIMITS.maxDescChars) {
-        showGenerateError('挑战描述过长（最多 ' + LIMITS.maxDescChars + ' 字符）。');
+        showGenerateError(t('validation.desc.too_long', { max: LIMITS.maxDescChars }));
         return;
     }
     for (var qi = 0; qi < validQuestions.length; qi++) {
         if (validQuestions[qi].question.length > LIMITS.maxQuestionTextChars) {
-            showGenerateError('第 ' + (qi + 1) + ' 个问题内容过长（最多 ' + LIMITS.maxQuestionTextChars + ' 字符）。');
+            showGenerateError(t('validation.question.text_too_long', { n: qi + 1, max: LIMITS.maxQuestionTextChars }));
             return;
         }
         if ((validQuestions[qi].hint || '').length > LIMITS.maxHintChars) {
-            showGenerateError('第 ' + (qi + 1) + ' 个问题提示过长（最多 ' + LIMITS.maxHintChars + ' 字符）。');
+            showGenerateError(t('validation.question.hint_too_long', { n: qi + 1, max: LIMITS.maxHintChars }));
             return;
         }
     }
 
     var threshold = Number.parseInt(thresholdInput.value, 10);
     if (isNaN(threshold) || threshold < 2) {
-        showGenerateError('门限值至少为 2。');
+        showGenerateError(t('validation.threshold.min2'));
         return;
     }
     if (threshold > LIMITS.maxThreshold) {
-        showGenerateError('门限值过大（最大 ' + LIMITS.maxThreshold + '）。');
+        showGenerateError(t('validation.threshold.too_large', { max: LIMITS.maxThreshold }));
         return;
     }
     if (threshold > validQuestions.length) {
-        showGenerateError('门限值 (' + threshold + ') 不能超过有效问题数 (' + validQuestions.length + ')。');
+        showGenerateError(t('validation.threshold.gt_questions', { threshold: threshold, count: validQuestions.length }));
         return;
     }
 
@@ -1450,62 +1539,15 @@ btnGenerate.addEventListener('click', async function () {
             hashLen = url.length - hashPos - 1;
         }
         var urlDisabled = hashLen > LIMITS.maxUrlHashChars;
-        var urlHint = '';
-        if (urlDisabled) {
-            urlHint =
-                '<div class="form-hint" style="margin-top: 10px; color: var(--warning);">' +
-                    '提示：挑战数据过大（hash 长度 ' + hashLen + '），出于安全限制无法通过链接导入，请使用“下载 JSON 文件”分享。' +
-                '</div>';
-        } else if (url.length > 2000) {
-            urlHint =
-                '<div class="form-hint" style="margin-top: 10px; color: var(--warning);">' +
-                    '提示：链接长度为 ' + url.length + '，部分平台可能截断或打不开，建议使用“下载 JSON 文件”分享。' +
-                '</div>';
-        }
-        var linkHtml = urlDisabled
-            ? ''
-            : '<textarea class="share-link" readonly id="share-link-output">' + escapeHtml(url) + '</textarea>';
-        var shareIntroText = urlDisabled
-            ? '挑战数据较大，请使用“下载 JSON 文件”分享给你的朋友。他们需要正确回答至少 ' + threshold + ' 个问题才能获取秘密。'
-            : '分享以下链接给你的朋友。他们需要正确回答至少 ' + threshold + ' 个问题才能获取秘密。';
-        var buttonsHtml = urlDisabled
-            ? '<div class="btn-group">' +
-                '<button class="btn btn-secondary" id="btn-download-json">下载 JSON 文件</button>' +
-              '</div>'
-            : '<div class="btn-group">' +
-                '<button class="btn btn-primary" id="btn-copy-link">复制链接</button>' +
-                '<button class="btn btn-secondary" id="btn-download-json">下载 JSON 文件</button>' +
-              '</div>';
-        generateResult.classList.remove('hidden');
-        generateResult.innerHTML =
-            '<div class="result-box success">' +
-                '<div class="result-label">挑战创建成功！</div>' +
-                '<p style="margin-bottom: 12px; font-size: 0.9em; color: var(--text-secondary);">' +
-                    escapeHtml(shareIntroText) +
-                '</p>' +
-                linkHtml +
-                urlHint +
-                buttonsHtml +
-            '</div>';
-
-        if (!urlDisabled) {
-            document.getElementById('btn-copy-link').addEventListener('click', function () {
-                var textarea = document.getElementById('share-link-output');
-                var btn = document.getElementById('btn-copy-link');
-                copyFromTextarea(textarea).then(function (ok) {
-                    if (ok) {
-                        btn.textContent = '已复制！';
-                    } else {
-                        btn.textContent = '复制失败';
-                    }
-                    setTimeout(function () { btn.textContent = '复制链接'; }, 2000);
-                });
-            });
-        }
-
-        document.getElementById('btn-download-json').addEventListener('click', function () {
-            challengeToFile(challenge, (challengeTitleEl.value.trim() || 'challenge') + '.json');
-        });
+        lastGeneratedState = {
+            challenge: challenge,
+            url: url,
+            hashLen: hashLen,
+            urlLen: url.length,
+            urlDisabled: urlDisabled,
+            threshold: threshold,
+        };
+        renderGenerateResult(lastGeneratedState);
 
     } catch (e) {
         showGenerateError(e.message);
@@ -1517,7 +1559,78 @@ btnGenerate.addEventListener('click', async function () {
 
 function showGenerateError(msg) {
     generateResult.classList.remove('hidden');
-    generateResult.innerHTML = '<div class="result-box error"><div class="result-label">错误</div><p>' + escapeHtml(msg) + '</p></div>';
+    generateResult.innerHTML =
+        '<div class="result-box error">' +
+            '<div class="result-label">' + escapeHtml(t('ui.error.title')) + '</div>' +
+            '<p>' + escapeHtml(msg) + '</p>' +
+        '</div>';
+}
+
+function renderGenerateResult(state) {
+    if (!state) return;
+
+    var urlHint = '';
+    if (state.urlDisabled) {
+        urlHint =
+            '<div class="form-hint" style="margin-top: 10px; color: var(--warning);">' +
+                escapeHtml(t('generate.hint.hash_too_long', { hashLen: state.hashLen })) +
+            '</div>';
+    } else if (state.urlLen > 2000) {
+        urlHint =
+            '<div class="form-hint" style="margin-top: 10px; color: var(--warning);">' +
+                escapeHtml(t('generate.hint.url_too_long', { urlLen: state.urlLen })) +
+            '</div>';
+    }
+
+    var linkHtml = state.urlDisabled
+        ? ''
+        : '<textarea class="share-link" readonly id="share-link-output">' + escapeHtml(state.url) + '</textarea>';
+
+    var shareIntroText = state.urlDisabled
+        ? t('generate.share_intro.large', { threshold: state.threshold })
+        : t('generate.share_intro.link', { threshold: state.threshold });
+
+    var buttonsHtml = state.urlDisabled
+        ? '<div class="btn-group">' +
+            '<button class="btn btn-secondary" id="btn-download-json">' + escapeHtml(t('generate.download_json')) + '</button>' +
+          '</div>'
+        : '<div class="btn-group">' +
+            '<button class="btn btn-primary" id="btn-copy-link">' + escapeHtml(t('generate.copy_link')) + '</button>' +
+            '<button class="btn btn-secondary" id="btn-download-json">' + escapeHtml(t('generate.download_json')) + '</button>' +
+          '</div>';
+
+    generateResult.classList.remove('hidden');
+    generateResult.innerHTML =
+        '<div class="result-box success">' +
+            '<div class="result-label">' + escapeHtml(t('generate.success.title')) + '</div>' +
+            '<p style="margin-bottom: 12px; font-size: 0.9em; color: var(--text-secondary);">' +
+                escapeHtml(shareIntroText) +
+            '</p>' +
+            linkHtml +
+            urlHint +
+            buttonsHtml +
+        '</div>';
+
+    var btnDownload = document.getElementById('btn-download-json');
+    if (btnDownload) {
+        btnDownload.addEventListener('click', function () {
+            challengeToFile(state.challenge, (challengeTitleEl.value.trim() || 'challenge') + '.json');
+        });
+    }
+
+    if (!state.urlDisabled) {
+        var btnCopy = document.getElementById('btn-copy-link');
+        if (btnCopy) {
+            btnCopy.addEventListener('click', function () {
+                var textarea = document.getElementById('share-link-output');
+                var btn = document.getElementById('btn-copy-link');
+                copyFromTextarea(textarea).then(function (ok) {
+                    btn.textContent = ok ? t('generate.copied') : t('generate.copy_failed');
+                    setTimeout(function () { btn.textContent = t('generate.copy_link'); }, 2000);
+                });
+            });
+        }
+    }
 }
 
 function loadChallenge(challenge) {
@@ -1525,30 +1638,7 @@ function loadChallenge(challenge) {
         const normalized = validateChallengeData(challenge);
         currentChallenge = normalized;
         showSolveLoadError('');
-
-        solveTitleEl.textContent = normalized.title || '秘密挑战';
-        solveDescEl.textContent = normalized.description || '';
-
-        let dateText = '未知日期';
-        if (normalized.createdAt) {
-            const createdAtDate = new Date(normalized.createdAt);
-            if (!isNaN(createdAtDate.getTime())) {
-                dateText = createdAtDate.toLocaleDateString('zh-CN');
-            }
-        }
-        solveMetaEl.textContent = '门限：' + normalized.threshold + '/' + normalized.questions.length +
-            ' · 创建于 ' + dateText;
-
-        solveQuestionsEl.innerHTML = '';
-        normalized.questions.forEach(function (q, i) {
-            var div = document.createElement('div');
-            div.className = 'solve-question';
-            div.innerHTML =
-                '<label>问题 ' + (i + 1) + '：' + escapeHtml(q.text) + '</label>' +
-                (q.hint ? '<div class="hint">提示：' + escapeHtml(q.hint) + '</div>' : '') +
-                '<input type="text" class="solve-answer" data-qid="' + q.id + '" placeholder="输入你的答案（不知道可以留空）">';
-            solveQuestionsEl.appendChild(div);
-        });
+        renderSolveChallenge(normalized, false);
 
         solveLoadCard.classList.add('hidden');
         solveContent.classList.remove('hidden');
@@ -1556,8 +1646,81 @@ function loadChallenge(challenge) {
 
         switchTab('solve');
     } catch (e) {
-        showSolveLoadError(e.message || '加载挑战失败');
+        showSolveLoadError(e.message || t('errors.solve.load_failed'));
     }
+}
+
+var lastSolveOutcome = null;
+
+function renderSolveChallenge(normalized, preserveAnswers) {
+    if (!normalized) return;
+
+    solveTitleEl.textContent = normalized.title || t('defaults.challenge_title');
+    solveDescEl.textContent = normalized.description || '';
+
+    var dateText = t('solve.meta.unknown_date');
+    if (normalized.createdAt) {
+        const createdAtDate = new Date(normalized.createdAt);
+        if (!isNaN(createdAtDate.getTime())) {
+            dateText = createdAtDate.toLocaleDateString(getLocaleForIntl());
+        }
+    }
+    solveMetaEl.textContent = t('solve.meta.format', {
+        threshold: normalized.threshold,
+        total: normalized.questions.length,
+        date: dateText,
+    });
+
+    var existingAnswers = {};
+    if (preserveAnswers) {
+        solveQuestionsEl.querySelectorAll('.solve-answer').forEach(function (input) {
+            var qid = Number.parseInt(input.dataset.qid, 10);
+            if (!Number.isNaN(qid)) existingAnswers[qid] = input.value;
+        });
+    }
+
+    solveQuestionsEl.innerHTML = '';
+    normalized.questions.forEach(function (q, i) {
+        var div = document.createElement('div');
+        div.className = 'solve-question';
+        div.innerHTML =
+            '<label>' + escapeHtml(t('solve.question.prefix', { n: i + 1 })) + escapeHtml(q.text) + '</label>' +
+            (q.hint ? '<div class="hint">' + escapeHtml(t('solve.hint.prefix')) + escapeHtml(q.hint) + '</div>' : '') +
+            '<input type="text" class="solve-answer" data-qid="' + q.id + '" placeholder="' + escapeHtml(t('solve.answer.placeholder')) + '">';
+        solveQuestionsEl.appendChild(div);
+
+        if (preserveAnswers && Object.prototype.hasOwnProperty.call(existingAnswers, q.id)) {
+            var inputEl = div.querySelector('.solve-answer');
+            if (inputEl) inputEl.value = existingAnswers[q.id];
+        }
+    });
+
+    if (!solveResultEl.classList.contains('hidden') && lastSolveOutcome) {
+        renderSolveResult(lastSolveOutcome);
+    }
+}
+
+function renderSolveResult(outcome) {
+    if (!outcome) return;
+    solveResultEl.classList.remove('hidden');
+    if (outcome.success) {
+        solveResultEl.innerHTML =
+            '<div class="result-box success">' +
+                '<div class="result-label">' + escapeHtml(t('solve.unlocked.title')) + '</div>' +
+                '<div class="result-value">' + escapeHtml(outcome.secret) + '</div>' +
+                '<p style="margin-top: 8px; font-size: 0.82em; color: var(--text-secondary);">' +
+                    escapeHtml(t('solve.unlocked.detail', { answered: outcome.answeredCount, used: outcome.usedCount || outcome.answeredCount })) +
+                '</p>' +
+            '</div>';
+        return;
+    }
+
+    var label = outcome.isError ? t('ui.error.title') : t('solve.failed.title');
+    solveResultEl.innerHTML =
+        '<div class="result-box error">' +
+            '<div class="result-label">' + escapeHtml(label) + '</div>' +
+            '<p>' + escapeHtml(outcome.error || '') + '</p>' +
+        '</div>';
 }
 
 fileImport.addEventListener('change', async function (e) {
@@ -1567,7 +1730,7 @@ fileImport.addEventListener('change', async function (e) {
         var challenge = await challengeFromFile(file);
         loadChallenge(challenge);
     } catch (err) {
-        showSolveLoadError('文件读取失败：' + (err.message || '未知错误'));
+        showSolveLoadError(t('errors.solve.file_read_failed', { msg: err.message || t('errors.solve.unknown_error') }));
     }
     fileImport.value = '';
 });
@@ -1581,12 +1744,12 @@ btnLoadLink.addEventListener('click', function () {
     if (!link) return;
     try {
         var hashIndex = link.indexOf('#');
-        if (hashIndex === -1) throw new Error('链接中没有挑战数据');
+        if (hashIndex === -1) throw new Error(t('errors.solve.link_no_data'));
         var data = link.substring(hashIndex + 1);
         var challenge = challengeFromBase64(data);
         loadChallenge(challenge);
     } catch (e) {
-        showSolveLoadError(e.message || '链接解析失败');
+        showSolveLoadError(e.message || t('errors.link.parse_failed'));
     }
 });
 
@@ -1602,38 +1765,19 @@ btnSolve.addEventListener('click', async function () {
     });
 
     btnSolve.disabled = true;
-    btnSolve.textContent = '正在求解...';
+    btnSolve.textContent = t('solve.solving');
 
     try {
         var result = await recoverSecret(currentChallenge, answers);
 
-        solveResultEl.classList.remove('hidden');
-        if (result.success) {
-            solveResultEl.innerHTML =
-                '<div class="result-box success">' +
-                    '<div class="result-label">秘密已解锁！</div>' +
-                    '<div class="result-value">' + escapeHtml(result.secret) + '</div>' +
-                    '<p style="margin-top: 8px; font-size: 0.82em; color: var(--text-secondary);">' +
-                        '已填写 ' + result.answeredCount + ' 个答案，使用其中 ' + (result.usedCount || result.answeredCount) + ' 个恢复秘密。' +
-                    '</p>' +
-                '</div>';
-        } else {
-            solveResultEl.innerHTML =
-                '<div class="result-box error">' +
-                    '<div class="result-label">求解失败</div>' +
-                    '<p>' + escapeHtml(result.error) + '</p>' +
-                '</div>';
-        }
+        lastSolveOutcome = result;
+        renderSolveResult(result);
     } catch (e) {
-        solveResultEl.classList.remove('hidden');
-        solveResultEl.innerHTML =
-            '<div class="result-box error">' +
-                '<div class="result-label">错误</div>' +
-                '<p>' + escapeHtml(e.message) + '</p>' +
-            '</div>';
+        lastSolveOutcome = { success: false, isError: true, error: e.message || '' };
+        renderSolveResult(lastSolveOutcome);
     } finally {
         btnSolve.disabled = false;
-        btnSolve.textContent = '解锁秘密';
+        btnSolve.textContent = t('solve.unlock');
     }
 });
 

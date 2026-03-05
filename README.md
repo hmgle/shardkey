@@ -20,6 +20,11 @@ python3 -m http.server 8000
 # then visit http://localhost:8000
 ```
 
+## Language
+
+- Use the top-right language selector to switch UI language (English / 日本語 / 简体中文 / 繁體中文).
+- You can also force the UI language via `?lang=` (supported: `en`, `ja`, `zh-CN`, `zh-TW`). The preference is saved in `localStorage`.
+
 ## Core Features
 
 1. Create a challenge: set a secret, questions/answers, and threshold.
