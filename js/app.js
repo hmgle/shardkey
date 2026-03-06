@@ -440,6 +440,121 @@ function base64UrlToBytes(base64url) {
     return bytes;
 }
 
+function bigIntToBase64Url(n) {
+    if (typeof n !== 'bigint' || n < 0n) {
+        throw new Error(t('errors.base64url.invalid_field'));
+    }
+    if (n === 0n) {
+        return 'AA';
+    }
+    let hex = n.toString(16);
+    if (hex.length % 2 !== 0) {
+        hex = '0' + hex;
+    }
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < bytes.length; i++) {
+        bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    }
+    return bytesToBase64Url(bytes);
+}
+
+function base64UrlToBigInt(base64url) {
+    return bytesToBigInt(base64UrlToBytes(base64url));
+}
+
+function packBase64UrlList(values) {
+    if (!Array.isArray(values) || values.length === 0) {
+        throw new Error(t('errors.link.invalid_data'));
+    }
+    return values.join('.');
+}
+
+function unpackBase64UrlList(value) {
+    if (typeof value !== 'string' || value.length === 0) {
+        throw new Error(t('errors.link.invalid_data'));
+    }
+    const parts = value.split('.');
+    if (!parts.length || parts.some(function (part) { return !part; })) {
+        throw new Error(t('errors.link.invalid_data'));
+    }
+    return parts;
+}
+
+function getDefaultChallengeKdf() {
+    return {
+        type: 'pbkdf2-sha256',
+        hash: 'SHA-256',
+        iterations: 120000,
+        dkLen: 32,
+        saltLen: 16,
+    };
+}
+
+function packChallengeForShare(challenge) {
+    if (!challenge || !Array.isArray(challenge.questions)) {
+        throw new Error(t('errors.link.invalid_data'));
+    }
+
+    return [
+        1,
+        typeof challenge.title === 'string' ? challenge.title : '',
+        typeof challenge.description === 'string' ? challenge.description : '',
+        Number(challenge.threshold) || 0,
+        Number(challenge.secretByteLength) || 0,
+        Number(challenge.secretPayloadByteLength) || 0,
+        typeof challenge.createdAt === 'string' ? challenge.createdAt : '',
+        challenge.questions.map(function (question) {
+            const xorValues = Array.isArray(question.xorValues) ? question.xorValues : [];
+            const xorTags = Array.isArray(question.xorTags) ? question.xorTags : [];
+            return [
+                typeof question.text === 'string' ? question.text : '',
+                typeof question.hint === 'string' ? question.hint : '',
+                bigIntToBase64Url(BigInt(String(question.modulus || '0'))),
+                String(question.salt || ''),
+                packBase64UrlList(xorValues.map(function (value) { return bigIntToBase64Url(BigInt(String(value || '0'))); })),
+                packBase64UrlList(xorTags.map(function (tag) { return String(tag || ''); })),
+            ];
+        }),
+    ];
+}
+
+function unpackChallengeFromShare(payload) {
+    if (!Array.isArray(payload) || payload.length !== 8 || payload[0] !== 1 || !Array.isArray(payload[7])) {
+        throw new Error(t('errors.link.invalid_data'));
+    }
+
+    return {
+        version: 3,
+        secretEncoding: 'offset-payload-v3',
+        title: typeof payload[1] === 'string' ? payload[1] : t('defaults.challenge_title'),
+        description: typeof payload[2] === 'string' ? payload[2] : '',
+        threshold: Number(payload[3]),
+        secretByteLength: Number(payload[4]),
+        secretPayloadByteLength: Number(payload[5]),
+        kdf: getDefaultChallengeKdf(),
+        questions: payload[7].map(function (question, index) {
+            if (!Array.isArray(question) || question.length !== 6) {
+                throw new Error(t('errors.link.invalid_data'));
+            }
+            const packedXorValues = unpackBase64UrlList(question[4]);
+            const packedXorTags = unpackBase64UrlList(question[5]);
+            if (packedXorValues.length !== packedXorTags.length) {
+                throw new Error(t('errors.link.invalid_data'));
+            }
+            return {
+                id: index,
+                text: typeof question[0] === 'string' ? question[0] : '',
+                hint: typeof question[1] === 'string' ? question[1] : '',
+                modulus: base64UrlToBigInt(String(question[2] || '')).toString(),
+                xorValues: packedXorValues.map(function (value) { return base64UrlToBigInt(value).toString(); }),
+                xorTags: packedXorTags,
+                salt: String(question[3] || ''),
+            };
+        }),
+        createdAt: typeof payload[6] === 'string' ? payload[6] : '',
+    };
+}
+
 async function encodeSecretPayloadV3(secretText) {
     const secretBytes = new TextEncoder().encode(secretText);
     if (secretBytes.length > LIMITS.maxSecretBytes) {
@@ -496,7 +611,7 @@ async function decodeSecretPayloadV3(payloadBytes) {
 }
 
 function challengeToBase64(obj) {
-    const json = JSON.stringify(obj);
+    const json = JSON.stringify(packChallengeForShare(obj));
     const bytes = new TextEncoder().encode(json);
     let binary = '';
     for (const b of bytes) {
@@ -527,7 +642,7 @@ function challengeFromBase64(base64url) {
         bytes[i] = binary.charCodeAt(i);
     }
     const json = new TextDecoder().decode(bytes);
-    return JSON.parse(json);
+    return unpackChallengeFromShare(JSON.parse(json));
 }
 
 function challengeToURL(obj) {
@@ -535,10 +650,8 @@ function challengeToURL(obj) {
     let baseURL = window.location.href.split('#')[0];
     try {
         const url = new URL(baseURL);
-        if (i18n && typeof i18n.getLang === 'function') {
-            url.searchParams.set('lang', i18n.getLang());
-            baseURL = url.toString();
-        }
+        url.search = '';
+        baseURL = url.toString();
     } catch (e) {
         // ignore
     }
@@ -707,13 +820,7 @@ async function generateChallenge(secret, questions, threshold, title, descriptio
         throw new Error(t('errors.challenge.generate_failed'));
     }
 
-    const kdf = {
-        type: 'pbkdf2-sha256',
-        hash: 'SHA-256',
-        iterations: 120000,
-        dkLen: 32,
-        saltLen: 16,
-    };
+    const kdf = getDefaultChallengeKdf();
 
     if (onProgress) onProgress(t('progress.computing_xor_mask'), 0, questions.length);
     const questionEntries = [];

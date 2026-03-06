@@ -30,7 +30,7 @@ python3 -m http.server 8000
 ## Core Features
 
 1. Create a challenge: set a secret, questions/answers, and threshold.
-2. Share a challenge: copy a self-contained link or export JSON.
+2. Share a challenge: copy a compact self-contained link or export JSON.
 3. Solve a challenge: import link/JSON, answer questions, and unlock.
 
 ### Multiple acceptable answers (per question)
@@ -46,6 +46,7 @@ Answer text can contain any characters (including `|`). The app no longer uses s
 - SHA-256 via Web Crypto API
 - Answers are hardened via PBKDF2 (per-question salt)
 - Each accepted answer stores a verification tag so recovery can validate answers before CRT reconstruction
+- Share links use a compact packed format to reduce URL length for forwarding and reposting
 - Fully local execution in browser (supports `file://`)
 - Uses a Web Worker when available to keep generation and recovery off the main UI thread
 
