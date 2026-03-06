@@ -20,6 +20,84 @@ function getLocaleForIntl() {
     return 'zh-CN';
 }
 
+function getWorkerMessages() {
+    if (i18n && typeof i18n.getMessages === 'function') {
+        return i18n.getMessages();
+    }
+    return {};
+}
+
+async function runTaskLocally(taskType, payload, onProgress) {
+    if (taskType === 'generate') {
+        return await generateChallenge(
+            payload.secret,
+            payload.questions,
+            payload.threshold,
+            payload.title,
+            payload.description,
+            onProgress
+        );
+    }
+    if (taskType === 'recover') {
+        return await recoverSecret(payload.challenge, payload.answers);
+    }
+    throw new Error('Unknown task type: ' + taskType);
+}
+
+async function runWorkerTask(taskType, payload, onProgress) {
+    if (typeof Worker === 'undefined') {
+        return await runTaskLocally(taskType, payload, onProgress);
+    }
+
+    var worker;
+    try {
+        worker = new Worker('js/worker.js');
+    } catch (e) {
+        return await runTaskLocally(taskType, payload, onProgress);
+    }
+
+    return await new Promise(function (resolve, reject) {
+        var settled = false;
+
+        function cleanup() {
+            if (worker) worker.terminate();
+        }
+
+        worker.onmessage = function (event) {
+            var data = event.data || {};
+            if (data.type === 'progress') {
+                if (typeof onProgress === 'function') {
+                    onProgress(data.msg, data.done, data.total);
+                }
+                return;
+            }
+            if (data.type === 'result') {
+                settled = true;
+                cleanup();
+                resolve(data.result);
+                return;
+            }
+            if (data.type === 'error') {
+                settled = true;
+                cleanup();
+                reject(new Error(data.error || 'Worker task failed'));
+            }
+        };
+
+        worker.onerror = function () {
+            cleanup();
+            if (settled) return;
+            runTaskLocally(taskType, payload, onProgress).then(resolve, reject);
+        };
+
+        worker.postMessage({
+            type: taskType,
+            payload: payload,
+            messages: getWorkerMessages(),
+        });
+    });
+}
+
 // =====================================================================
 // limits.js — 安全稳健的输入边界
 // =====================================================================
@@ -1445,10 +1523,15 @@ btnGenerate.addEventListener('click', async function () {
     });
 
     try {
-        var challenge = await generateChallenge(
-            secret, preparedQuestions, threshold,
-            titleCandidate || undefined,
-            descCandidate || undefined,
+        var challenge = await runWorkerTask(
+            'generate',
+            {
+                secret: secret,
+                questions: preparedQuestions,
+                threshold: threshold,
+                title: titleCandidate || undefined,
+                description: descCandidate || undefined,
+            },
             function (msg, done, total) {
                 var pct = total > 0 ? Math.round((done / total) * 100) : 0;
                 progressFill.style.width = pct + '%';
@@ -1725,7 +1808,10 @@ btnSolve.addEventListener('click', async function () {
     btnSolve.textContent = t('solve.solving');
 
     try {
-        var result = await recoverSecret(currentChallenge, answers);
+        var result = await runWorkerTask('recover', {
+            challenge: currentChallenge,
+            answers: answers,
+        });
 
         lastSolveOutcome = result;
         renderSolveResult(result);

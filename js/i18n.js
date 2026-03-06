@@ -738,18 +738,30 @@
         return 'zh-CN';
     }
 
-    function t(key, params) {
-        var dict = translations[currentLang] || translations['zh-CN'] || {};
+    function getMessages(lang) {
+        var norm = normalizeLang(lang || currentLang);
         var fallback = translations['zh-CN'] || {};
+        var dict = translations[norm] || fallback;
+        var merged = {};
+        Object.keys(fallback).forEach(function (key) {
+            merged[key] = fallback[key];
+        });
+        Object.keys(dict).forEach(function (key) {
+            merged[key] = dict[key];
+        });
+        return merged;
+    }
+
+    function t(key, params) {
+        var dict = getMessages(currentLang);
         var template = safeGet(dict, key);
-        if (template === undefined) template = safeGet(fallback, key);
         if (template === undefined) template = key;
 
         var out = String(template);
         if (params && typeof params === 'object') {
             Object.keys(params).forEach(function (k) {
                 var val = params[k];
-                out = out.replace(new RegExp('\\{' + k + '\\}', 'g'), String(val));
+                out = out.replace(new RegExp('\{' + k + '\}', 'g'), String(val));
             });
         }
         return out;
@@ -799,6 +811,7 @@
         setLang: setLang,
         onChange: onChange,
         t: t,
+        getMessages: getMessages,
         getLocaleForIntl: getLocaleForIntl,
     };
 })();

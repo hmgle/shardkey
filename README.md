@@ -47,6 +47,7 @@ Answer text can contain any characters (including `|`). The app no longer uses s
 - Answers are hardened via PBKDF2 (per-question salt)
 - Each accepted answer stores a verification tag so recovery can validate answers before CRT reconstruction
 - Fully local execution in browser (supports `file://`)
+- Uses a Web Worker when available to keep generation and recovery off the main UI thread
 
 ## Security Notes
 
