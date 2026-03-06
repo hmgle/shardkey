@@ -40,6 +40,7 @@ python3 -m http.server 8000
 - 使用 BigInt 进行大整数运算
 - 使用 Web Crypto API 进行 SHA-256 哈希
 - 使用 PBKDF2（每题独立 salt）增强答案抗爆破
+- 每个可接受答案都会附带校验标签，先验证答案，再进入 CRT 恢复
 - 所有计算都在浏览器本地完成，支持 `file://` 直接打开
 
 ## 安全说明

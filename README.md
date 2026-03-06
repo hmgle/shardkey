@@ -45,6 +45,7 @@ Answer text can contain any characters (including `|`). The app no longer uses s
 - BigInt-based large integer arithmetic
 - SHA-256 via Web Crypto API
 - Answers are hardened via PBKDF2 (per-question salt)
+- Each accepted answer stores a verification tag so recovery can validate answers before CRT reconstruction
 - Fully local execution in browser (supports `file://`)
 
 ## Security Notes

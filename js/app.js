@@ -262,10 +262,6 @@ async function deriveAnswerKeyMaterialPBKDF2(answer, saltBytes, iterations, dkLe
     };
 }
 
-async function deriveAnswerKeyBigIntPBKDF2(answer, saltBytes, iterations, dkLenBytes) {
-    const material = await deriveAnswerKeyMaterialPBKDF2(answer, saltBytes, iterations, dkLenBytes);
-    return material.keyBigInt;
-}
 
 async function computeAnswerVerificationTag(keyBytes, saltBytes, modulusBigInt, xorValueBigInt) {
     const tagInput = [
@@ -648,7 +644,6 @@ async function generateChallenge(secret, questions, threshold, title, descriptio
             text: q.question,
             hint: q.hint || '',
             modulus: mi.toString(),
-            xorValue: xorValues[0],
             xorValues: xorValues,
             xorTags: xorTags,
             salt: bytesToBase64Url(saltBytes),
@@ -678,41 +673,16 @@ async function generateChallenge(secret, questions, threshold, title, descriptio
 // solver.js — 求解流程
 // =====================================================================
 
-function questionHasVerificationTags(question) {
-    if (Array.isArray(question.xorTags) && Array.isArray(question.xorValuesBigInt)) {
-        return question.xorTags.length > 0 && question.xorTags.length === question.xorValuesBigInt.length;
-    }
-    if (Array.isArray(question.variants) && question.variants.length > 0) {
-        return question.variants.every(function (variant) { return typeof variant.tag === 'string' && variant.tag.length > 0; });
-    }
-    return false;
-}
-
 async function findVerifiedQuestionRemainder(question, userAnswer, kdf, modulusBigInt) {
-    if (Array.isArray(question.xorTags) && Array.isArray(question.xorValuesBigInt) && question.xorTags.length === question.xorValuesBigInt.length && question.xorTags.length > 0) {
-        const keyMaterial = await deriveAnswerKeyMaterialPBKDF2(userAnswer, question.saltBytes, kdf.iterations, kdf.dkLen);
-        const keyMod = ((keyMaterial.keyBigInt % modulusBigInt) + modulusBigInt) % modulusBigInt;
-        for (let i = 0; i < question.xorValuesBigInt.length; i++) {
-            const xorVal = question.xorValuesBigInt[i];
-            const expectedTag = await computeAnswerVerificationTag(keyMaterial.keyBytes, question.saltBytes, modulusBigInt, xorVal);
-            if (expectedTag === question.xorTags[i]) {
-                return keyMod ^ xorVal;
-            }
-        }
-        return null;
-    }
-
-    if (Array.isArray(question.variants) && question.variants.length > 0 && question.variants.every(function (variant) { return typeof variant.tag === 'string' && variant.tag.length > 0; })) {
-        for (const variant of question.variants) {
-            const keyMaterial = await deriveAnswerKeyMaterialPBKDF2(userAnswer, variant.saltBytes, kdf.iterations, kdf.dkLen);
-            const keyMod = ((keyMaterial.keyBigInt % modulusBigInt) + modulusBigInt) % modulusBigInt;
-            const expectedTag = await computeAnswerVerificationTag(keyMaterial.keyBytes, variant.saltBytes, modulusBigInt, variant.xorValueBigInt);
-            if (expectedTag === variant.tag) {
-                return keyMod ^ variant.xorValueBigInt;
-            }
+    const keyMaterial = await deriveAnswerKeyMaterialPBKDF2(userAnswer, question.saltBytes, kdf.iterations, kdf.dkLen);
+    const keyMod = ((keyMaterial.keyBigInt % modulusBigInt) + modulusBigInt) % modulusBigInt;
+    for (let i = 0; i < question.xorValuesBigInt.length; i++) {
+        const xorVal = question.xorValuesBigInt[i];
+        const expectedTag = await computeAnswerVerificationTag(keyMaterial.keyBytes, question.saltBytes, modulusBigInt, xorVal);
+        if (expectedTag === question.xorTags[i]) {
+            return keyMod ^ xorVal;
         }
     }
-
     return null;
 }
 
@@ -757,218 +727,53 @@ async function recoverSecret(challenge, answers) {
     }
 
     const verifiedEntries = [];
-    const fallbackEntries = [];
-
     for (const q of answeredQuestions) {
         const userAnswer = String(answers[q.id] || '');
-        const mi = q.modulusBigInt || BigInt(q.modulus);
+        const mi = q.modulusBigInt;
         const verifiedRemainder = await findVerifiedQuestionRemainder(q, userAnswer, kdf, mi);
         if (verifiedRemainder !== null) {
             verifiedEntries.push({ modulus: mi, remainder: verifiedRemainder });
             if (verifiedEntries.length % 8 === 0) {
                 await yieldToUI();
             }
-            continue;
-        }
-
-        if (questionHasVerificationTags(q)) {
-            continue;
-        }
-
-        const candidates = [];
-        const seen = new Set();
-
-        if (Array.isArray(q.xorValuesBigInt) && q.xorValuesBigInt.length > 0) {
-            const keyVal = await deriveAnswerKeyBigIntPBKDF2(userAnswer, q.saltBytes, kdf.iterations, kdf.dkLen);
-            const keyMod = ((keyVal % mi) + mi) % mi;
-            for (const xorVal of q.xorValuesBigInt) {
-                const bi = keyMod ^ xorVal;
-                const biKey = bi.toString();
-                if (!seen.has(biKey)) {
-                    seen.add(biKey);
-                    candidates.push(bi);
-                }
-                if (candidates.length >= 16) break;
-            }
-        } else {
-            const variants = Array.isArray(q.variants) && q.variants.length > 0
-                ? q.variants
-                : [{
-                    xorValueBigInt: q.xorValueBigInt || BigInt(q.xorValue),
-                    saltBytes: q.saltBytes,
-                }];
-            for (const v of variants) {
-                const xorVal = v.xorValueBigInt || BigInt(v.xorValue);
-                const saltBytes = v.saltBytes || base64UrlToBytes(String(v.salt || ''));
-                const keyVal = await deriveAnswerKeyBigIntPBKDF2(userAnswer, saltBytes, kdf.iterations, kdf.dkLen);
-                const keyMod = ((keyVal % mi) + mi) % mi;
-                const bi = keyMod ^ xorVal;
-                const biKey = bi.toString();
-                if (!seen.has(biKey)) {
-                    seen.add(biKey);
-                    candidates.push(bi);
-                }
-                if (candidates.length >= 16) break;
-            }
-        }
-
-        if (candidates.length === 0) {
-            continue;
-        }
-
-        fallbackEntries.push({ modulus: mi, candidates: candidates });
-        if (fallbackEntries.length % 8 === 0) {
-            await yieldToUI();
         }
     }
 
-    const allModuli = questions.map(function (q) { return q.modulusBigInt || BigInt(q.modulus); });
-    const bounds = calculateMignotteBounds(allModuli, threshold);
-    const alpha = bounds.alpha;
-    const beta = bounds.beta;
-
-    if (verifiedEntries.length >= threshold) {
-        const solvedEntries = verifiedEntries.slice(0, threshold);
-        const secretText = await decodeRecoveredSecretFromRemainders(
-            solvedEntries.map(function (item) { return item.remainder; }),
-            solvedEntries.map(function (item) { return item.modulus; }),
-            alpha,
-            beta,
-            secretPayloadByteLength,
-            secretByteLength
-        );
-        if (secretText !== null) {
-            return { success: true, secret: secretText, answeredCount: answeredCount, usedCount: threshold };
-        }
-    }
-
-    const needFallbackCount = threshold - verifiedEntries.length;
-    if (needFallbackCount <= 0 || fallbackEntries.length < needFallbackCount) {
+    if (verifiedEntries.length < threshold) {
         return {
             success: false,
             error: t('errors.solver.verify_failed', { suffix: '' }),
             answeredCount: answeredCount,
-            testedSubsets: 0,
-            testedCombos: 0,
         };
     }
 
-    const solveStartedAt = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-    const maxSolveMs = 8000;
-    function isOverSolveBudget() {
-        const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-        return (now - solveStartedAt) > maxSolveMs;
+    const allModuli = questions.map(function (q) { return q.modulusBigInt; });
+    const bounds = calculateMignotteBounds(allModuli, threshold);
+    const alpha = bounds.alpha;
+    const beta = bounds.beta;
+    const solvedEntries = verifiedEntries.slice(0, threshold);
+    const secretText = await decodeRecoveredSecretFromRemainders(
+        solvedEntries.map(function (item) { return item.remainder; }),
+        solvedEntries.map(function (item) { return item.modulus; }),
+        alpha,
+        beta,
+        secretPayloadByteLength,
+        secretByteLength
+    );
+
+    if (secretText === null) {
+        return {
+            success: false,
+            error: t('errors.solver.verify_failed', { suffix: '' }),
+            answeredCount: answeredCount,
+        };
     }
 
-    async function trySubset(subsetIndices) {
-        const subsetItems = verifiedEntries.concat(subsetIndices.map(function (idx) { return fallbackEntries[idx]; }))
-            .map(function (item) {
-                return item.candidates
-                    ? { modulus: item.modulus, candidates: item.candidates }
-                    : { modulus: item.modulus, candidates: [item.remainder] };
-            })
-            .sort(function (a, b) { return a.candidates.length - b.candidates.length; });
-
-        const moduli = subsetItems.map(function (item) { return item.modulus; });
-        const remainders = new Array(subsetItems.length);
-
-        async function tryCandidates(pos) {
-            if (testedCombos >= maxComboTries || isOverSolveBudget()) {
-                truncated = true;
-                if (!truncatedReason) truncatedReason = isOverSolveBudget() ? 'time' : 'limit';
-                return null;
-            }
-            if (pos >= subsetItems.length) {
-                testedCombos++;
-                const secretText = await decodeRecoveredSecretFromRemainders(
-                    remainders,
-                    moduli,
-                    alpha,
-                    beta,
-                    secretPayloadByteLength,
-                    secretByteLength
-                );
-                if (testedCombos % 16 === 0) {
-                    await yieldToUI();
-                }
-                return secretText;
-            }
-
-            const item = subsetItems[pos];
-            for (const cand of item.candidates) {
-                remainders[pos] = cand;
-                const found = await tryCandidates(pos + 1);
-                if (found !== null) return found;
-                if (truncated) return null;
-            }
-            return null;
-        }
-
-        return await tryCandidates(0);
-    }
-
-    const maxSubsetTries = 4096;
-    const maxComboTries = 8192;
-    let testedSubsets = 0;
-    let testedCombos = 0;
-    let truncated = false;
-    let truncatedReason = '';
-    const indices = [];
-    for (let i = 0; i < needFallbackCount; i++) {
-        indices.push(i);
-    }
-
-    while (true) {
-        if (isOverSolveBudget()) {
-            truncated = true;
-            truncatedReason = 'time';
-            break;
-        }
-        testedSubsets++;
-        try {
-            const secretText = await trySubset(indices);
-            if (secretText !== null) {
-                return { success: true, secret: secretText, answeredCount: answeredCount, usedCount: threshold };
-            }
-        } catch (e) {
-            // continue searching other fallback subsets
-        }
-
-        if (truncated || testedSubsets >= maxSubsetTries) {
-            truncated = true;
-            if (!truncatedReason) truncatedReason = 'limit';
-            break;
-        }
-
-        let pivot = needFallbackCount - 1;
-        while (pivot >= 0 && indices[pivot] === fallbackEntries.length - needFallbackCount + pivot) {
-            pivot--;
-        }
-        if (pivot < 0) {
-            break;
-        }
-
-        indices[pivot]++;
-        for (let j = pivot + 1; j < needFallbackCount; j++) {
-            indices[j] = indices[j - 1] + 1;
-        }
-
-        if (testedSubsets % 16 === 0) {
-            await yieldToUI();
-        }
-    }
-
-    const suffix = truncated
-        ? (truncatedReason === 'time'
-            ? t('errors.solver.timeout_suffix')
-            : t('errors.solver.limit_suffix'))
-        : '';
     return {
-        success: false,
-        error: t('errors.solver.verify_failed', { suffix: suffix }),
+        success: true,
+        secret: secretText,
         answeredCount: answeredCount,
-        testedSubsets: testedSubsets,
-        testedCombos: testedCombos,
+        usedCount: threshold,
     };
 }
 
@@ -1073,7 +878,6 @@ function validateChallengeData(challenge) {
         if (modulusBits > allowedModBits) {
             throw new Error(t('errors.challenge.question_params_invalid_value'));
         }
-
         function parseQuestionTag(rawTag) {
             const tag = String(rawTag || '');
             if (!/^[0-9A-Za-z_-]{8,120}$/.test(tag)) {
@@ -1082,100 +886,38 @@ function validateChallengeData(challenge) {
             return tag;
         }
 
-        function parseVariant(rawVariant) {
-            if (!isPlainObject(rawVariant)) {
+        if (!Array.isArray(q.xorValues) || q.xorValues.length === 0 || q.xorValues.length > 16) {
+            throw new Error(t('errors.challenge.answer_variants_count_invalid'));
+        }
+        if (!Array.isArray(q.xorTags) || q.xorTags.length !== q.xorValues.length) {
+            throw new Error(t('errors.challenge.question_tag_invalid'));
+        }
+
+        const xorValueStrs = q.xorValues.map(function (v) { return String(v || ''); });
+        for (const xvs of xorValueStrs) {
+            if (!/^\d+$/.test(xvs) || xvs.length > LIMITS.maxBigIntDigits) {
                 throw new Error(t('errors.challenge.question_params_invalid_format'));
             }
-            const xorValueStr = String(rawVariant.xorValue || '');
-            if (!/^\d+$/.test(xorValueStr) || xorValueStr.length > LIMITS.maxBigIntDigits) {
-                throw new Error(t('errors.challenge.question_params_invalid_format'));
-            }
-            const xorValueBigInt = BigInt(xorValueStr);
-            if (xorValueBigInt < 0n) {
+        }
+        const xorValuesBigInt = xorValueStrs.map(function (s) { return BigInt(s); });
+        for (const xvb of xorValuesBigInt) {
+            if (xvb < 0n) {
                 throw new Error(t('errors.challenge.question_params_invalid_value'));
             }
-            const xorBits = xorValueBigInt === 0n ? 1 : xorValueBigInt.toString(2).length;
+            const xorBits = xvb === 0n ? 1 : xvb.toString(2).length;
             if (xorBits > modulusBits) {
                 throw new Error(t('errors.challenge.question_params_invalid_value'));
             }
-            const salt = String(rawVariant.salt || '');
-            if (!/^[0-9A-Za-z_-]{8,200}$/.test(salt)) {
-                throw new Error(t('errors.challenge.question_salt_invalid'));
-            }
-            const saltBytes = base64UrlToBytes(salt);
-            if (saltBytes.length !== kdf.saltLen) {
-                throw new Error(t('errors.challenge.question_salt_invalid'));
-            }
-            const tag = rawVariant.tag === undefined || rawVariant.tag === null || rawVariant.tag === ''
-                ? null
-                : parseQuestionTag(rawVariant.tag);
-            return {
-                xorValue: xorValueBigInt.toString(),
-                xorValueBigInt: xorValueBigInt,
-                salt: salt,
-                saltBytes: saltBytes,
-                tag: tag,
-            };
         }
+        const xorTags = q.xorTags.map(parseQuestionTag);
 
-        let xorValuesBigInt = null;
-        let xorValueBigInt = null;
-        let xorTags = null;
-        let salt = null;
-        let saltBytes = null;
-        let variants = [];
-
-        if (Array.isArray(q.xorValues) && q.xorValues.length > 0) {
-            if (q.xorValues.length > 16) {
-                throw new Error(t('errors.challenge.too_many_variants', { max: 16 }));
-            }
-            const xorValueStrs = q.xorValues.map(function (v) { return String(v || ''); });
-            for (const xvs of xorValueStrs) {
-                if (!/^\d+$/.test(xvs) || xvs.length > LIMITS.maxBigIntDigits) {
-                    throw new Error(t('errors.challenge.question_params_invalid_format'));
-                }
-            }
-            xorValuesBigInt = xorValueStrs.map(function (s) { return BigInt(s); });
-            for (const xvb of xorValuesBigInt) {
-                if (xvb < 0n) {
-                    throw new Error(t('errors.challenge.question_params_invalid_value'));
-                }
-                const xorBits = xvb === 0n ? 1 : xvb.toString(2).length;
-                if (xorBits > modulusBits) {
-                    throw new Error(t('errors.challenge.question_params_invalid_value'));
-                }
-            }
-            xorValueBigInt = xorValuesBigInt[0];
-
-            if (q.xorTags !== undefined) {
-                if (!Array.isArray(q.xorTags) || q.xorTags.length !== q.xorValues.length) {
-                    throw new Error(t('errors.challenge.question_tag_invalid'));
-                }
-                xorTags = q.xorTags.map(parseQuestionTag);
-            }
-
-            salt = String(q.salt || '');
-            if (!/^[0-9A-Za-z_-]{8,200}$/.test(salt)) {
-                throw new Error(t('errors.challenge.question_salt_invalid'));
-            }
-            saltBytes = base64UrlToBytes(salt);
-            if (saltBytes.length !== kdf.saltLen) {
-                throw new Error(t('errors.challenge.question_salt_invalid'));
-            }
-        } else if (Array.isArray(q.variants)) {
-            if (q.variants.length === 0 || q.variants.length > 16) {
-                throw new Error(t('errors.challenge.answer_variants_count_invalid'));
-            }
-            variants = q.variants.map(parseVariant);
-            xorValueBigInt = variants[0].xorValueBigInt;
-            salt = variants[0].salt;
-            saltBytes = variants[0].saltBytes;
-        } else {
-            const primary = parseVariant({ xorValue: q.xorValue, salt: q.salt, tag: q.tag });
-            variants = [primary];
-            xorValueBigInt = primary.xorValueBigInt;
-            salt = primary.salt;
-            saltBytes = primary.saltBytes;
+        const salt = String(q.salt || '');
+        if (!/^[0-9A-Za-z_-]{8,200}$/.test(salt)) {
+            throw new Error(t('errors.challenge.question_salt_invalid'));
+        }
+        const saltBytes = base64UrlToBytes(salt);
+        if (saltBytes.length !== kdf.saltLen) {
+            throw new Error(t('errors.challenge.question_salt_invalid'));
         }
 
         for (const prev of usedModuli) {
@@ -1191,14 +933,11 @@ function validateChallengeData(challenge) {
             hint: hint,
             modulus: modulusBigInt.toString(),
             modulusBigInt: modulusBigInt,
-            xorValue: xorValueBigInt.toString(),
-            xorValueBigInt: xorValueBigInt,
-            xorValues: xorValuesBigInt ? xorValuesBigInt.map(function (v) { return v.toString(); }) : null,
+            xorValues: xorValuesBigInt.map(function (v) { return v.toString(); }),
             xorValuesBigInt: xorValuesBigInt,
             xorTags: xorTags,
             salt: salt,
             saltBytes: saltBytes,
-            variants: variants,
         };
     });
 
