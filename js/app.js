@@ -1,4 +1,4 @@
-// app.js — 秘密共享工具（合并版，兼容 file:// 协议）
+// app.js — 离线问答解锁器（合并版，兼容 file:// 协议）
 // 合并自：crt.js, crypto.js, encoding.js, creator.js, solver.js, main.js
 
 (function () {
@@ -58,43 +58,72 @@ async function runWorkerTask(taskType, payload, onProgress) {
 
     return await new Promise(function (resolve, reject) {
         var settled = false;
+        var fellBack = false;
 
         function cleanup() {
-            if (worker) worker.terminate();
+            if (!worker) return;
+            worker.onmessage = null;
+            worker.onerror = null;
+            worker.onmessageerror = null;
+            worker.terminate();
+            worker = null;
+        }
+
+        function finishWithResult(result) {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(result);
+        }
+
+        function finishWithError(error) {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(error);
+        }
+
+        function fallbackToLocal() {
+            if (settled || fellBack) return;
+            fellBack = true;
+            cleanup();
+            runTaskLocally(taskType, payload, onProgress).then(finishWithResult, finishWithError);
         }
 
         worker.onmessage = function (event) {
             var data = event.data || {};
             if (data.type === 'progress') {
                 if (typeof onProgress === 'function') {
-                    onProgress(data.msg, data.done, data.total);
+                    try {
+                        onProgress(data.msg, data.done, data.total);
+                    } catch (e) {
+                    }
                 }
                 return;
             }
             if (data.type === 'result') {
-                settled = true;
-                cleanup();
-                resolve(data.result);
+                finishWithResult(data.result);
                 return;
             }
             if (data.type === 'error') {
-                settled = true;
-                cleanup();
-                reject(new Error(data.error || 'Worker task failed'));
+                finishWithError(new Error(data.error || 'Worker task failed'));
+                return;
             }
+            finishWithError(new Error('Worker returned invalid response'));
         };
 
-        worker.onerror = function () {
-            cleanup();
-            if (settled) return;
-            runTaskLocally(taskType, payload, onProgress).then(resolve, reject);
-        };
+        worker.onerror = fallbackToLocal;
+        worker.onmessageerror = fallbackToLocal;
 
-        worker.postMessage({
-            type: taskType,
-            payload: payload,
-            messages: getWorkerMessages(),
-        });
+        try {
+            worker.postMessage({
+                type: taskType,
+                payload: payload,
+                messages: getWorkerMessages(),
+            });
+        } catch (e) {
+            fallbackToLocal();
+        }
     });
 }
 
