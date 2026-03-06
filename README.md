@@ -2,8 +2,10 @@
 
 [中文](README.zh-CN.md)
 
-ShardKey is a browser-only tool for unlocking secrets by answering questions.
+ShardKey is a browser-only offline question-and-answer unlocker for shared secrets.
 You define questions, answers, and a threshold (minimum correct answers required). The app generates a shareable link or JSON challenge, and the secret can only be recovered when enough answers are correct.
+
+Think of it as a shareable offline challenge format, not as a full-strength secret-sharing system.
 
 ## Quick Start
 
@@ -47,8 +49,9 @@ Answer text can contain any characters (including `|`). The app no longer uses s
 
 ## Security Notes
 
+- ShardKey is positioned as an offline Q&A unlocker, not as a replacement for audited cryptographic secret-sharing systems.
 - Shared data does not include the plaintext secret, correct answers, or answer hashes
-- The threshold scheme prevents recovery with insufficient correct answers
+- The threshold logic is meant to gate offline unlocking, not to protect high-value secrets like a password vault
 - The recovered secret is validated by an embedded checksum and avoids false unlocks
 
 ### Important limitations
@@ -58,3 +61,4 @@ Answer text can contain any characters (including `|`). The app no longer uses s
 - For robustness, the app enforces practical size limits (currently: secret ≤ 1024 bytes, questions ≤ 64, threshold ≤ 64). Larger challenges should be split up.
 - Use a high-entropy secret if you need real confidentiality (e.g. append a random suffix), and prefer higher thresholds.
 - Mignotte/CRT is not Shamir secret sharing and does not provide perfect secrecy; do not treat this tool as a substitute for vetted cryptographic secret sharing.
+- If you need strong cryptographic protection, use an audited secret-sharing system or a password manager instead of relying on challenge questions alone.

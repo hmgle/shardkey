@@ -452,6 +452,28 @@ textarea {
 }
 
 /* 求解页面 */
+.solve-load-desc {
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+    font-size: 0.9em;
+}
+
+.solve-load-note {
+    margin-bottom: 8px;
+}
+
+.paste-link-area {
+    margin-top: 12px;
+}
+
+.paste-link-input {
+    min-height: 50px;
+}
+
+.paste-link-submit {
+    margin-top: 8px;
+}
+
 .challenge-info {
     background: var(--bg);
     padding: 14px;
@@ -474,6 +496,12 @@ textarea {
 .challenge-info .info-meta {
     font-size: 0.82em;
     color: var(--text-secondary);
+}
+
+.solve-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 12px;
 }
 
 .solve-question {

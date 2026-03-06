@@ -19,7 +19,7 @@
                     <option value="zh-TW">繁體中文</option>
                 </select>
             </div>
-            <p data-i18n="app.tagline">通过回答问题解锁秘密的门限共享工具</p>
+            <p data-i18n="app.tagline">通过回答问题离线解锁秘密的工具</p>
         </header>
 
         <div id="runtime-warning" class="hidden"></div>
@@ -93,9 +93,10 @@
             <!-- 加载挑战 -->
             <div class="card" id="solve-load-card">
                 <h2 data-i18n="solve.load.title">加载挑战</h2>
-                <p style="color: var(--text-secondary); margin-bottom: 12px; font-size: 0.9em;">
+                <p class="solve-load-desc">
                     <span data-i18n="solve.load.desc">通过链接自动加载，或手动导入挑战文件。</span>
                 </p>
+                <div class="form-hint solve-load-note" data-i18n="solve.load.note">本工具完全离线运行；弱答案仍可能被离线猜解。</div>
                 <div class="btn-group">
                     <div class="file-input-wrapper">
                         <button class="btn btn-secondary" data-i18n="solve.load.from_file">从文件导入</button>
@@ -104,9 +105,9 @@
                     <button class="btn btn-secondary" id="btn-paste-link" data-i18n="solve.load.paste_link">粘贴链接</button>
                 </div>
                 <div id="solve-load-error" class="hidden"></div>
-                <div id="paste-link-area" class="hidden" style="margin-top: 12px;">
-                    <textarea id="paste-link-input" data-i18n-placeholder="solve.load.link_placeholder" placeholder="粘贴包含挑战数据的链接..." style="min-height: 50px;"></textarea>
-                    <button class="btn btn-primary" id="btn-load-link" data-i18n="solve.load.load" style="margin-top: 8px;">加载</button>
+                <div id="paste-link-area" class="hidden paste-link-area">
+                    <textarea id="paste-link-input" data-i18n-placeholder="solve.load.link_placeholder" placeholder="粘贴包含挑战数据的链接..." class="paste-link-input"></textarea>
+                    <button class="btn btn-primary paste-link-submit" id="btn-load-link" data-i18n="solve.load.load">加载</button>
                 </div>
             </div>
 
@@ -117,6 +118,9 @@
                         <div class="info-title" id="solve-title"></div>
                         <div class="info-desc" id="solve-desc"></div>
                         <div class="info-meta" id="solve-meta"></div>
+                        <div class="solve-toolbar">
+                            <button class="btn btn-secondary" id="btn-change-challenge" data-i18n="solve.change">更换挑战</button>
+                        </div>
                     </div>
                 </div>
 
@@ -132,7 +136,7 @@
         </div>
 
         <footer>
-            <span data-i18n="footer.text">ShardKey · 中国剩余定理 + Mignotte 门限方案</span>
+            <span data-i18n="footer.text">ShardKey · 离线问答解锁器</span>
         </footer>
     </div>
 

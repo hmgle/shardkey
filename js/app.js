@@ -238,7 +238,7 @@ async function generateModuli(count, bitSize, onProgress) {
     return moduli;
 }
 
-async function deriveAnswerKeyBigIntPBKDF2(answer, saltBytes, iterations, dkLenBytes) {
+async function deriveAnswerKeyMaterialPBKDF2(answer, saltBytes, iterations, dkLenBytes) {
     const normalized = normalizeAnswer(answer);
     const inputBytes = new TextEncoder().encode(normalized);
     const keyMaterial = await crypto.subtle.importKey(
@@ -256,7 +256,27 @@ async function deriveAnswerKeyBigIntPBKDF2(answer, saltBytes, iterations, dkLenB
     );
 
     const keyBytes = new Uint8Array(derivedBits);
-    return bytesToBigInt(keyBytes);
+    return {
+        keyBytes: keyBytes,
+        keyBigInt: bytesToBigInt(keyBytes),
+    };
+}
+
+async function deriveAnswerKeyBigIntPBKDF2(answer, saltBytes, iterations, dkLenBytes) {
+    const material = await deriveAnswerKeyMaterialPBKDF2(answer, saltBytes, iterations, dkLenBytes);
+    return material.keyBigInt;
+}
+
+async function computeAnswerVerificationTag(keyBytes, saltBytes, modulusBigInt, xorValueBigInt) {
+    const tagInput = [
+        'shardkey-answer-tag-v1',
+        bytesToBase64Url(keyBytes),
+        bytesToBase64Url(saltBytes),
+        modulusBigInt.toString(),
+        xorValueBigInt.toString(),
+    ].join('|');
+    const tagBytes = (await sha256Bytes(tagInput)).slice(0, 16);
+    return bytesToBase64Url(tagBytes);
 }
 
 // =====================================================================
@@ -610,12 +630,14 @@ async function generateChallenge(secret, questions, threshold, title, descriptio
         const saltBytes = getSecureRandomBytes(kdf.saltLen);
 
         const xorValues = [];
+        const xorTags = [];
         for (const answerText of answerOptions) {
             if (!String(answerText || '').trim()) continue;
-            const keyVal = await deriveAnswerKeyBigIntPBKDF2(answerText, saltBytes, kdf.iterations, kdf.dkLen);
-            const keyMod = ((keyVal % mi) + mi) % mi;
+            const keyMaterial = await deriveAnswerKeyMaterialPBKDF2(answerText, saltBytes, kdf.iterations, kdf.dkLen);
+            const keyMod = ((keyMaterial.keyBigInt % mi) + mi) % mi;
             const xorValue = keyMod ^ remainder;
             xorValues.push(xorValue.toString());
+            xorTags.push(await computeAnswerVerificationTag(keyMaterial.keyBytes, saltBytes, mi, xorValue));
         }
         if (xorValues.length === 0) {
             throw new Error(t('errors.question.missing_answer', { n: i + 1 }));
@@ -628,6 +650,7 @@ async function generateChallenge(secret, questions, threshold, title, descriptio
             modulus: mi.toString(),
             xorValue: xorValues[0],
             xorValues: xorValues,
+            xorTags: xorTags,
             salt: bytesToBase64Url(saltBytes),
         });
 
@@ -655,6 +678,62 @@ async function generateChallenge(secret, questions, threshold, title, descriptio
 // solver.js — 求解流程
 // =====================================================================
 
+function questionHasVerificationTags(question) {
+    if (Array.isArray(question.xorTags) && Array.isArray(question.xorValuesBigInt)) {
+        return question.xorTags.length > 0 && question.xorTags.length === question.xorValuesBigInt.length;
+    }
+    if (Array.isArray(question.variants) && question.variants.length > 0) {
+        return question.variants.every(function (variant) { return typeof variant.tag === 'string' && variant.tag.length > 0; });
+    }
+    return false;
+}
+
+async function findVerifiedQuestionRemainder(question, userAnswer, kdf, modulusBigInt) {
+    if (Array.isArray(question.xorTags) && Array.isArray(question.xorValuesBigInt) && question.xorTags.length === question.xorValuesBigInt.length && question.xorTags.length > 0) {
+        const keyMaterial = await deriveAnswerKeyMaterialPBKDF2(userAnswer, question.saltBytes, kdf.iterations, kdf.dkLen);
+        const keyMod = ((keyMaterial.keyBigInt % modulusBigInt) + modulusBigInt) % modulusBigInt;
+        for (let i = 0; i < question.xorValuesBigInt.length; i++) {
+            const xorVal = question.xorValuesBigInt[i];
+            const expectedTag = await computeAnswerVerificationTag(keyMaterial.keyBytes, question.saltBytes, modulusBigInt, xorVal);
+            if (expectedTag === question.xorTags[i]) {
+                return keyMod ^ xorVal;
+            }
+        }
+        return null;
+    }
+
+    if (Array.isArray(question.variants) && question.variants.length > 0 && question.variants.every(function (variant) { return typeof variant.tag === 'string' && variant.tag.length > 0; })) {
+        for (const variant of question.variants) {
+            const keyMaterial = await deriveAnswerKeyMaterialPBKDF2(userAnswer, variant.saltBytes, kdf.iterations, kdf.dkLen);
+            const keyMod = ((keyMaterial.keyBigInt % modulusBigInt) + modulusBigInt) % modulusBigInt;
+            const expectedTag = await computeAnswerVerificationTag(keyMaterial.keyBytes, variant.saltBytes, modulusBigInt, variant.xorValueBigInt);
+            if (expectedTag === variant.tag) {
+                return keyMod ^ variant.xorValueBigInt;
+            }
+        }
+    }
+
+    return null;
+}
+
+async function decodeRecoveredSecretFromRemainders(remainders, moduli, alpha, beta, secretPayloadByteLength, secretByteLength) {
+    const recovered = solveCRT(remainders, moduli);
+    if (recovered <= beta || recovered >= alpha) {
+        return null;
+    }
+    const decodedValue = decodeRecoveredSecretValueV3(recovered, secretPayloadByteLength);
+    const payloadBytes = bigIntToBytes(decodedValue, secretPayloadByteLength);
+    try {
+        const decoded = await decodeSecretPayloadV3(payloadBytes);
+        if (decoded.secretByteLength !== secretByteLength) {
+            return null;
+        }
+        return decoded.secretText;
+    } catch (e) {
+        return null;
+    }
+}
+
 async function recoverSecret(challenge, answers) {
     challenge = validateChallengeData(challenge);
 
@@ -665,7 +744,7 @@ async function recoverSecret(challenge, answers) {
     const kdf = challenge.kdf;
 
     const answeredQuestions = questions.filter(function (q) {
-        return answers[q.id] !== undefined && answers[q.id].trim() !== '';
+        return answers[q.id] !== undefined && String(answers[q.id] || '').trim() !== '';
     });
     const answeredCount = answeredQuestions.length;
 
@@ -677,18 +756,25 @@ async function recoverSecret(challenge, answers) {
         };
     }
 
-    const solveStartedAt = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-    const maxSolveMs = 8000;
-    function isOverSolveBudget() {
-        const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-        return (now - solveStartedAt) > maxSolveMs;
-    }
-
-    const entries = [];
+    const verifiedEntries = [];
+    const fallbackEntries = [];
 
     for (const q of answeredQuestions) {
-        const userAnswer = answers[q.id];
+        const userAnswer = String(answers[q.id] || '');
         const mi = q.modulusBigInt || BigInt(q.modulus);
+        const verifiedRemainder = await findVerifiedQuestionRemainder(q, userAnswer, kdf, mi);
+        if (verifiedRemainder !== null) {
+            verifiedEntries.push({ modulus: mi, remainder: verifiedRemainder });
+            if (verifiedEntries.length % 8 === 0) {
+                await yieldToUI();
+            }
+            continue;
+        }
+
+        if (questionHasVerificationTags(q)) {
+            continue;
+        }
+
         const candidates = [];
         const seen = new Set();
 
@@ -730,21 +816,57 @@ async function recoverSecret(challenge, answers) {
             continue;
         }
 
-        entries.push({ modulus: mi, candidates: candidates });
-        if (entries.length % 8 === 0) {
+        fallbackEntries.push({ modulus: mi, candidates: candidates });
+        if (fallbackEntries.length % 8 === 0) {
             await yieldToUI();
         }
     }
-
-    entries.sort(function (a, b) { return a.candidates.length - b.candidates.length; });
 
     const allModuli = questions.map(function (q) { return q.modulusBigInt || BigInt(q.modulus); });
     const bounds = calculateMignotteBounds(allModuli, threshold);
     const alpha = bounds.alpha;
     const beta = bounds.beta;
 
+    if (verifiedEntries.length >= threshold) {
+        const solvedEntries = verifiedEntries.slice(0, threshold);
+        const secretText = await decodeRecoveredSecretFromRemainders(
+            solvedEntries.map(function (item) { return item.remainder; }),
+            solvedEntries.map(function (item) { return item.modulus; }),
+            alpha,
+            beta,
+            secretPayloadByteLength,
+            secretByteLength
+        );
+        if (secretText !== null) {
+            return { success: true, secret: secretText, answeredCount: answeredCount, usedCount: threshold };
+        }
+    }
+
+    const needFallbackCount = threshold - verifiedEntries.length;
+    if (needFallbackCount <= 0 || fallbackEntries.length < needFallbackCount) {
+        return {
+            success: false,
+            error: t('errors.solver.verify_failed', { suffix: '' }),
+            answeredCount: answeredCount,
+            testedSubsets: 0,
+            testedCombos: 0,
+        };
+    }
+
+    const solveStartedAt = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    const maxSolveMs = 8000;
+    function isOverSolveBudget() {
+        const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+        return (now - solveStartedAt) > maxSolveMs;
+    }
+
     async function trySubset(subsetIndices) {
-        const subsetItems = subsetIndices.map(function (idx) { return entries[idx]; })
+        const subsetItems = verifiedEntries.concat(subsetIndices.map(function (idx) { return fallbackEntries[idx]; }))
+            .map(function (item) {
+                return item.candidates
+                    ? { modulus: item.modulus, candidates: item.candidates }
+                    : { modulus: item.modulus, candidates: [item.remainder] };
+            })
             .sort(function (a, b) { return a.candidates.length - b.candidates.length; });
 
         const moduli = subsetItems.map(function (item) { return item.modulus; });
@@ -758,25 +880,18 @@ async function recoverSecret(challenge, answers) {
             }
             if (pos >= subsetItems.length) {
                 testedCombos++;
-                const recovered = solveCRT(remainders, moduli);
-                if (recovered <= beta || recovered >= alpha) {
-                    return null;
+                const secretText = await decodeRecoveredSecretFromRemainders(
+                    remainders,
+                    moduli,
+                    alpha,
+                    beta,
+                    secretPayloadByteLength,
+                    secretByteLength
+                );
+                if (testedCombos % 16 === 0) {
+                    await yieldToUI();
                 }
-                const decodedValue = decodeRecoveredSecretValueV3(recovered, secretPayloadByteLength);
-                const payloadBytes = bigIntToBytes(decodedValue, secretPayloadByteLength);
-                try {
-                    const decoded = await decodeSecretPayloadV3(payloadBytes);
-                    if (decoded.secretByteLength !== secretByteLength) {
-                        return null;
-                    }
-                    return decoded.secretText;
-                } catch (e) {
-                    return null;
-                } finally {
-                    if (testedCombos % 16 === 0) {
-                        await yieldToUI();
-                    }
-                }
+                return secretText;
             }
 
             const item = subsetItems[pos];
@@ -798,61 +913,48 @@ async function recoverSecret(challenge, answers) {
     let testedCombos = 0;
     let truncated = false;
     let truncatedReason = '';
+    const indices = [];
+    for (let i = 0; i < needFallbackCount; i++) {
+        indices.push(i);
+    }
 
-    if (entries.length === threshold) {
+    while (true) {
+        if (isOverSolveBudget()) {
+            truncated = true;
+            truncatedReason = 'time';
+            break;
+        }
+        testedSubsets++;
         try {
-            testedSubsets = 1;
-            const secretText = await trySubset(entries.map(function (_, i) { return i; }));
+            const secretText = await trySubset(indices);
             if (secretText !== null) {
                 return { success: true, secret: secretText, answeredCount: answeredCount, usedCount: threshold };
             }
         } catch (e) {
-            return { success: false, error: t('errors.solver.failed_prefix', { msg: e.message }), answeredCount: answeredCount };
-        }
-    } else {
-        const n = entries.length;
-        const indices = [];
-        for (let i = 0; i < threshold; i++) {
-            indices.push(i);
+            // continue searching other fallback subsets
         }
 
-        while (true) {
-            if (isOverSolveBudget()) {
-                truncated = true;
-                truncatedReason = 'time';
-                break;
-            }
-            testedSubsets++;
-            try {
-                const secretText = await trySubset(indices);
-                if (secretText !== null) {
-                    return { success: true, secret: secretText, answeredCount: answeredCount, usedCount: threshold };
-                }
-            } catch (e) {
-                // 单个子集失败时继续尝试其他组合
-            }
+        if (truncated || testedSubsets >= maxSubsetTries) {
+            truncated = true;
+            if (!truncatedReason) truncatedReason = 'limit';
+            break;
+        }
 
-            if (truncated || testedSubsets >= maxSubsetTries) {
-                truncated = true;
-                break;
-            }
+        let pivot = needFallbackCount - 1;
+        while (pivot >= 0 && indices[pivot] === fallbackEntries.length - needFallbackCount + pivot) {
+            pivot--;
+        }
+        if (pivot < 0) {
+            break;
+        }
 
-            let pivot = threshold - 1;
-            while (pivot >= 0 && indices[pivot] === n - threshold + pivot) {
-                pivot--;
-            }
-            if (pivot < 0) {
-                break;
-            }
+        indices[pivot]++;
+        for (let j = pivot + 1; j < needFallbackCount; j++) {
+            indices[j] = indices[j - 1] + 1;
+        }
 
-            indices[pivot]++;
-            for (let j = pivot + 1; j < threshold; j++) {
-                indices[j] = indices[j - 1] + 1;
-            }
-
-            if (testedSubsets % 16 === 0) {
-                await yieldToUI();
-            }
+        if (testedSubsets % 16 === 0) {
+            await yieldToUI();
         }
     }
 
@@ -972,6 +1074,14 @@ function validateChallengeData(challenge) {
             throw new Error(t('errors.challenge.question_params_invalid_value'));
         }
 
+        function parseQuestionTag(rawTag) {
+            const tag = String(rawTag || '');
+            if (!/^[0-9A-Za-z_-]{8,120}$/.test(tag)) {
+                throw new Error(t('errors.challenge.question_tag_invalid'));
+            }
+            return tag;
+        }
+
         function parseVariant(rawVariant) {
             if (!isPlainObject(rawVariant)) {
                 throw new Error(t('errors.challenge.question_params_invalid_format'));
@@ -996,16 +1106,21 @@ function validateChallengeData(challenge) {
             if (saltBytes.length !== kdf.saltLen) {
                 throw new Error(t('errors.challenge.question_salt_invalid'));
             }
+            const tag = rawVariant.tag === undefined || rawVariant.tag === null || rawVariant.tag === ''
+                ? null
+                : parseQuestionTag(rawVariant.tag);
             return {
                 xorValue: xorValueBigInt.toString(),
                 xorValueBigInt: xorValueBigInt,
                 salt: salt,
                 saltBytes: saltBytes,
+                tag: tag,
             };
         }
 
         let xorValuesBigInt = null;
         let xorValueBigInt = null;
+        let xorTags = null;
         let salt = null;
         let saltBytes = null;
         let variants = [];
@@ -1032,6 +1147,13 @@ function validateChallengeData(challenge) {
             }
             xorValueBigInt = xorValuesBigInt[0];
 
+            if (q.xorTags !== undefined) {
+                if (!Array.isArray(q.xorTags) || q.xorTags.length !== q.xorValues.length) {
+                    throw new Error(t('errors.challenge.question_tag_invalid'));
+                }
+                xorTags = q.xorTags.map(parseQuestionTag);
+            }
+
             salt = String(q.salt || '');
             if (!/^[0-9A-Za-z_-]{8,200}$/.test(salt)) {
                 throw new Error(t('errors.challenge.question_salt_invalid'));
@@ -1049,7 +1171,7 @@ function validateChallengeData(challenge) {
             salt = variants[0].salt;
             saltBytes = variants[0].saltBytes;
         } else {
-            const primary = parseVariant({ xorValue: q.xorValue, salt: q.salt });
+            const primary = parseVariant({ xorValue: q.xorValue, salt: q.salt, tag: q.tag });
             variants = [primary];
             xorValueBigInt = primary.xorValueBigInt;
             salt = primary.salt;
@@ -1073,6 +1195,7 @@ function validateChallengeData(challenge) {
             xorValueBigInt: xorValueBigInt,
             xorValues: xorValuesBigInt ? xorValuesBigInt.map(function (v) { return v.toString(); }) : null,
             xorValuesBigInt: xorValuesBigInt,
+            xorTags: xorTags,
             salt: salt,
             saltBytes: saltBytes,
             variants: variants,
@@ -1144,6 +1267,7 @@ var btnPasteLink = document.getElementById('btn-paste-link');
 var pasteLinkArea = document.getElementById('paste-link-area');
 var pasteLinkInput = document.getElementById('paste-link-input');
 var btnLoadLink = document.getElementById('btn-load-link');
+var btnChangeChallenge = document.getElementById('btn-change-challenge');
 
 function switchTab(tabName) {
     tabBtns.forEach(function (btn) { btn.classList.toggle('active', btn.dataset.tab === tabName); });
@@ -1163,6 +1287,7 @@ function escapeHtml(text) {
 
 var langSelectEl = document.getElementById('lang-select');
 var lastGeneratedState = null;
+var currentChallengeSource = '';
 
 function applyStaticI18n() {
     document.querySelectorAll('[data-i18n]').forEach(function (el) {
@@ -1297,6 +1422,66 @@ function showSolveLoadError(msg) {
             '<div class="result-label">' + escapeHtml(t('ui.load_failed.title')) + '</div>' +
             '<p>' + escapeHtml(msg) + '</p>' +
         '</div>';
+}
+
+function setSolveLoadedState(loaded) {
+    solveLoadCard.classList.toggle('hidden', loaded);
+    solveContent.classList.toggle('hidden', !loaded);
+}
+
+function resetSolveState(clearError) {
+    currentChallenge = null;
+    currentChallengeSource = '';
+    lastSolveOutcome = null;
+
+    solveTitleEl.textContent = '';
+    solveDescEl.textContent = '';
+    solveMetaEl.textContent = '';
+    solveQuestionsEl.innerHTML = '';
+    solveResultEl.classList.add('hidden');
+    solveResultEl.innerHTML = '';
+
+    btnSolve.disabled = false;
+    btnSolve.textContent = t('solve.unlock');
+
+    pasteLinkArea.classList.add('hidden');
+    pasteLinkInput.value = '';
+
+    if (clearError) {
+        showSolveLoadError('');
+    }
+
+    setSolveLoadedState(false);
+}
+
+function replaceLocationHash(hashValue) {
+    var baseURL = window.location.href.split('#')[0];
+    var nextURL = hashValue ? (baseURL + '#' + hashValue) : baseURL;
+
+    if (window.history && typeof window.history.replaceState === 'function') {
+        window.history.replaceState(null, document.title, nextURL);
+        return;
+    }
+
+    if (hashValue) {
+        window.location.hash = hashValue;
+    } else if (window.location.hash) {
+        window.location.hash = '';
+    }
+}
+
+function parseChallengeHashFromLink(link) {
+    var trimmed = String(link || '').trim();
+    if (!trimmed) {
+        throw new Error(t('errors.solve.link_no_data'));
+    }
+
+    var hashIndex = trimmed.indexOf('#');
+    if (hashIndex === -1 || hashIndex === trimmed.length - 1) {
+        throw new Error(t('errors.solve.link_no_data'));
+    }
+
+    return trimmed.substring(hashIndex + 1);
 }
 
 function addQuestion(text, answer, hint) {
@@ -1637,20 +1822,42 @@ function loadChallenge(challenge) {
     try {
         const normalized = validateChallengeData(challenge);
         currentChallenge = normalized;
+        currentChallengeSource = 'loaded';
+        lastSolveOutcome = null;
         showSolveLoadError('');
         renderSolveChallenge(normalized, false);
 
-        solveLoadCard.classList.add('hidden');
-        solveContent.classList.remove('hidden');
+        setSolveLoadedState(true);
         solveResultEl.classList.add('hidden');
+        solveResultEl.innerHTML = '';
 
         switchTab('solve');
+        return true;
     } catch (e) {
         showSolveLoadError(e.message || t('errors.solve.load_failed'));
+        return false;
     }
 }
 
 var lastSolveOutcome = null;
+
+function loadChallengeFromSource(challenge, options) {
+    options = options || {};
+
+    if (!loadChallenge(challenge)) {
+        return false;
+    }
+
+    currentChallengeSource = options.source || 'loaded';
+
+    if (options.hashData !== undefined) {
+        replaceLocationHash(options.hashData);
+    } else if (options.clearHash) {
+        replaceLocationHash('');
+    }
+
+    return true;
+}
 
 function renderSolveChallenge(normalized, preserveAnswers) {
     if (!normalized) return;
@@ -1728,9 +1935,11 @@ fileImport.addEventListener('change', async function (e) {
     if (!file) return;
     try {
         var challenge = await challengeFromFile(file);
-        loadChallenge(challenge);
+        loadChallengeFromSource(challenge, { clearHash: true, source: 'file' });
     } catch (err) {
+        resetSolveState(false);
         showSolveLoadError(t('errors.solve.file_read_failed', { msg: err.message || t('errors.solve.unknown_error') }));
+        switchTab('solve');
     }
     fileImport.value = '';
 });
@@ -1743,14 +1952,22 @@ btnLoadLink.addEventListener('click', function () {
     var link = pasteLinkInput.value.trim();
     if (!link) return;
     try {
-        var hashIndex = link.indexOf('#');
-        if (hashIndex === -1) throw new Error(t('errors.solve.link_no_data'));
-        var data = link.substring(hashIndex + 1);
+        var data = parseChallengeHashFromLink(link);
         var challenge = challengeFromBase64(data);
-        loadChallenge(challenge);
+        loadChallengeFromSource(challenge, { hashData: data, source: 'pasted-link' });
     } catch (e) {
+        resetSolveState(false);
         showSolveLoadError(e.message || t('errors.link.parse_failed'));
+        switchTab('solve');
     }
+});
+
+btnChangeChallenge.addEventListener('click', function () {
+    if (currentChallengeSource === 'url-hash' || currentChallengeSource === 'pasted-link') {
+        replaceLocationHash('');
+    }
+    resetSolveState(true);
+    switchTab('solve');
 });
 
 btnSolve.addEventListener('click', async function () {
@@ -1758,7 +1975,8 @@ btnSolve.addEventListener('click', async function () {
 
     var answers = {};
     solveQuestionsEl.querySelectorAll('.solve-answer').forEach(function (input) {
-        var val = input.value.trim();
+        var rawVal = typeof input.value === 'string' ? input.value : String(input.value || '');
+        var val = rawVal.trim();
         if (val) {
             answers[Number.parseInt(input.dataset.qid, 10)] = val;
         }
@@ -1784,9 +2002,10 @@ btnSolve.addEventListener('click', async function () {
 function checkURLChallenge() {
     var parsed = parseChallengeFromURLDetailed();
     if (parsed.challenge) {
-        loadChallenge(parsed.challenge);
+        loadChallengeFromSource(parsed.challenge, { source: 'url-hash' });
         return;
     }
+    resetSolveState(!parsed.error);
     if (parsed.error) {
         showSolveLoadError(parsed.error);
     }

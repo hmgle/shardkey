@@ -8,7 +8,7 @@
     var translations = {
         'zh-CN': {
             'app.title': 'ShardKey - 答题解锁秘密',
-            'app.tagline': '通过回答问题解锁秘密的门限共享工具',
+            'app.tagline': '通过回答问题离线解锁秘密的工具',
             'ui.language': '语言',
             'tabs.create': '创建挑战',
             'tabs.solve': '求解挑战',
@@ -26,7 +26,7 @@
             'create.questions.add': '+ 添加问题',
             'create.threshold.title': '门限设置',
             'create.threshold.label': '门限值',
-            'create.threshold.hint': '需要正确回答的最少问题数。值越大越安全，但也要求回答者知道更多答案。',
+            'create.threshold.hint': '至少需要答对多少题。值越大，需要知道的答案越多，也更不容易被随手猜中。',
             'create.question_count.label': '问题总数',
             'create.generate': '生成挑战',
 
@@ -43,11 +43,13 @@
             'create.answer.placeholder_indexed': '答案 {n}（大小写不敏感）',
 
             'solve.load.title': '加载挑战',
-            'solve.load.desc': '通过链接自动加载，或手动导入挑战文件。',
+            'solve.load.desc': '通过地址栏链接自动加载，或手动导入挑战文件/链接。',
             'solve.load.from_file': '从文件导入',
             'solve.load.paste_link': '粘贴链接',
             'solve.load.link_placeholder': '粘贴包含挑战数据的链接...',
             'solve.load.load': '加载',
+            'solve.load.note': '本工具完全离线运行；弱答案仍可能被离线猜解。',
+            'solve.change': '更换挑战',
             'solve.questions.title': '回答问题',
             'solve.unlock': '解锁秘密',
             'solve.solving': '正在求解...',
@@ -60,7 +62,7 @@
             'solve.answer.placeholder': '输入你的答案（不知道可以留空）',
             'solve.unlocked.detail': '已填写 {answered} 个答案，使用其中 {used} 个恢复秘密。',
 
-            'footer.text': 'ShardKey · 中国剩余定理 + Mignotte 门限方案',
+            'footer.text': 'ShardKey · 离线问答解锁器',
 
             'ui.error.title': '错误',
             'ui.load_failed.title': '加载失败',
@@ -71,14 +73,14 @@
             'runtime.not_supported.after_example': '）。',
 
             'defaults.challenge_title': '秘密挑战',
-            'defaults.challenge_desc': '回答问题来获取秘密！',
+            'defaults.challenge_desc': '在这个离线问答解锁器中回答问题来获取秘密！',
 
             'progress.generating_moduli': '正在生成素数模数...',
             'progress.computing_xor_mask': '正在计算 XOR 掩码...',
 
             'generate.success.title': '挑战创建成功！',
-            'generate.share_intro.link': '分享以下链接给你的朋友。他们需要正确回答至少 {threshold} 个问题才能获取秘密。',
-            'generate.share_intro.large': '挑战数据较大，请使用“下载 JSON 文件”分享给你的朋友。他们需要正确回答至少 {threshold} 个问题才能获取秘密。',
+            'generate.share_intro.link': '分享以下链接给你的朋友。他们可以在离线问答解锁器中打开它，并至少答对 {threshold} 个问题来获取秘密。',
+            'generate.share_intro.large': '挑战数据较大，建议通过“下载 JSON 文件”离线分享给朋友。他们至少答对 {threshold} 个问题后才能获取秘密。',
             'generate.copy_link': '复制链接',
             'generate.copied': '已复制！',
             'generate.copy_failed': '复制失败',
@@ -149,6 +151,7 @@
             'errors.challenge.question_params_invalid_format': '题目参数格式无效',
             'errors.challenge.question_params_invalid_value': '题目参数取值无效',
             'errors.challenge.question_salt_invalid': '题目 salt 无效',
+            'errors.challenge.question_tag_invalid': '题目校验标签无效',
             'errors.challenge.too_many_variants': '单题答案变体过多（最多 {max} 个）',
             'errors.challenge.answer_variants_count_invalid': '题目答案变体数量无效',
             'errors.challenge.moduli_not_coprime': '模数不是两两互素',
@@ -163,7 +166,7 @@
         },
         en: {
             'app.title': 'ShardKey - Unlock Secrets by Q&A',
-            'app.tagline': 'A threshold sharing tool to unlock a secret by answering questions',
+            'app.tagline': 'An offline question-and-answer unlocker for shared secrets',
             'ui.language': 'Language',
             'tabs.create': 'Create',
             'tabs.solve': 'Solve',
@@ -181,7 +184,7 @@
             'create.questions.add': '+ Add question',
             'create.threshold.title': 'Threshold',
             'create.threshold.label': 'Threshold',
-            'create.threshold.hint': 'Minimum number of correct answers required. Higher is safer, but requires knowing more answers.',
+            'create.threshold.hint': 'How many correct answers are required. Higher values require more known answers and make casual guessing harder.',
             'create.question_count.label': 'Total questions',
             'create.generate': 'Generate challenge',
 
@@ -198,11 +201,13 @@
             'create.answer.placeholder_indexed': 'Answer {n} (case-insensitive)',
 
             'solve.load.title': 'Load challenge',
-            'solve.load.desc': 'Auto-load from the link, or import a JSON file.',
+            'solve.load.desc': 'Auto-load from the URL hash, or import a challenge file/link.',
             'solve.load.from_file': 'Import JSON',
             'solve.load.paste_link': 'Paste link',
             'solve.load.link_placeholder': 'Paste a link that contains challenge data...',
             'solve.load.load': 'Load',
+            'solve.load.note': 'Everything runs locally in your browser. Weak answers may still be guessed offline.',
+            'solve.change': 'Load another challenge',
             'solve.questions.title': 'Answer questions',
             'solve.unlock': 'Unlock secret',
             'solve.solving': 'Solving...',
@@ -215,7 +220,7 @@
             'solve.answer.placeholder': "Your answer (leave empty if you don't know)",
             'solve.unlocked.detail': 'You filled {answered} answers; used {used} of them to recover the secret.',
 
-            'footer.text': 'ShardKey · CRT + Mignotte threshold scheme',
+            'footer.text': 'ShardKey · offline Q&A unlocker',
 
             'ui.error.title': 'Error',
             'ui.load_failed.title': 'Load failed',
@@ -226,14 +231,14 @@
             'runtime.not_supported.after_example': ').',
 
             'defaults.challenge_title': 'Secret Challenge',
-            'defaults.challenge_desc': 'Answer questions to unlock the secret!',
+            'defaults.challenge_desc': 'Answer questions in this offline unlocker to recover the secret!',
 
             'progress.generating_moduli': 'Generating prime moduli...',
             'progress.computing_xor_mask': 'Computing XOR mask...',
 
             'generate.success.title': 'Challenge created!',
-            'generate.share_intro.link': 'Share this link. The solver must answer at least {threshold} questions correctly to recover the secret.',
-            'generate.share_intro.large': 'This challenge is large. Share it via “Download JSON”. The solver must answer at least {threshold} questions correctly to recover the secret.',
+            'generate.share_intro.link': 'Share this link. The recipient can open it in the offline unlocker and must answer at least {threshold} questions correctly to recover the secret.',
+            'generate.share_intro.large': 'This challenge is large. Share it offline via “Download JSON”. The recipient must answer at least {threshold} questions correctly to recover the secret.',
             'generate.copy_link': 'Copy link',
             'generate.copied': 'Copied!',
             'generate.copy_failed': 'Copy failed',
@@ -304,6 +309,7 @@
             'errors.challenge.question_params_invalid_format': 'Invalid question parameters format',
             'errors.challenge.question_params_invalid_value': 'Invalid question parameter value',
             'errors.challenge.question_salt_invalid': 'Invalid question salt',
+            'errors.challenge.question_tag_invalid': 'Invalid question verification tag',
             'errors.challenge.too_many_variants': 'Too many answer variants for one question (max {max})',
             'errors.challenge.answer_variants_count_invalid': 'Invalid number of answer variants',
             'errors.challenge.moduli_not_coprime': 'Moduli are not pairwise coprime',
@@ -318,7 +324,7 @@
         },
         ja: {
             'app.title': 'ShardKey - 質問に答えて秘密を解除',
-            'app.tagline': '質問に答えて秘密を解除するしきい値共有ツール',
+            'app.tagline': '質問への回答で秘密をローカル解除するツール',
             'ui.language': '言語',
             'tabs.create': '作成',
             'tabs.solve': '解除',
@@ -336,7 +342,7 @@
             'create.questions.add': '+ 質問を追加',
             'create.threshold.title': 'しきい値',
             'create.threshold.label': 'しきい値',
-            'create.threshold.hint': '必要な最小正答数。大きいほど安全ですが、より多くの答えが必要になります。',
+            'create.threshold.hint': '最低何問正解すればよいかを示します。値が大きいほど、知っている答えが多く必要になり、気軽な推測にも通りにくくなります。',
             'create.question_count.label': '質問数',
             'create.generate': 'チャレンジを生成',
 
@@ -353,11 +359,13 @@
             'create.answer.placeholder_indexed': '答え {n}（大文字小文字は区別しません）',
 
             'solve.load.title': 'チャレンジを読み込む',
-            'solve.load.desc': 'リンクから自動読み込み、または JSON ファイルをインポートします。',
+            'solve.load.desc': 'URL ハッシュから自動読み込み、またはチャレンジのファイル/リンクを読み込みます。',
             'solve.load.from_file': 'JSON をインポート',
             'solve.load.paste_link': 'リンクを貼り付け',
             'solve.load.link_placeholder': 'チャレンジデータを含むリンクを貼り付け...',
             'solve.load.load': '読み込む',
+            'solve.load.note': 'すべての処理はブラウザ内で完結します。弱い答えはオフラインで推測される可能性があります。',
+            'solve.change': '別のチャレンジを読み込む',
             'solve.questions.title': '質問に答える',
             'solve.unlock': '秘密を解除',
             'solve.solving': '解除中...',
@@ -370,7 +378,7 @@
             'solve.answer.placeholder': '答えを入力（わからない場合は空欄）',
             'solve.unlocked.detail': '入力した答えは {answered} 件、そのうち {used} 件で秘密を復元しました。',
 
-            'footer.text': 'ShardKey · 中国剰余定理 + Mignotte しきい値方式',
+            'footer.text': 'ShardKey · オフライン Q&A アンロッカー',
 
             'ui.error.title': 'エラー',
             'ui.load_failed.title': '読み込み失敗',
@@ -381,14 +389,14 @@
             'runtime.not_supported.after_example': '）。',
 
             'defaults.challenge_title': '秘密チャレンジ',
-            'defaults.challenge_desc': '質問に答えて秘密を解除！',
+            'defaults.challenge_desc': 'このオフライン Q&A アンロッカーで質問に答えて秘密を解除！',
 
             'progress.generating_moduli': '素数の法を生成中...',
             'progress.computing_xor_mask': 'XOR マスクを計算中...',
 
             'generate.success.title': 'チャレンジを作成しました！',
-            'generate.share_intro.link': 'このリンクを共有してください。秘密を復元するには、少なくとも {threshold} 問の正解が必要です。',
-            'generate.share_intro.large': 'チャレンジが大きいため、“JSON をダウンロード”で共有してください。秘密を復元するには、少なくとも {threshold} 問の正解が必要です。',
+            'generate.share_intro.link': 'このリンクを共有してください。相手はオフライン Q&A アンロッカーで開き、秘密を復元するには少なくとも {threshold} 問の正解が必要です。',
+            'generate.share_intro.large': 'チャレンジが大きいため、“JSON をダウンロード”でオフライン共有してください。秘密を復元するには、少なくとも {threshold} 問の正解が必要です。',
             'generate.copy_link': 'リンクをコピー',
             'generate.copied': 'コピーしました！',
             'generate.copy_failed': 'コピー失敗',
@@ -459,6 +467,7 @@
             'errors.challenge.question_params_invalid_format': '質問パラメータ形式が無効です',
             'errors.challenge.question_params_invalid_value': '質問パラメータ値が無効です',
             'errors.challenge.question_salt_invalid': '質問 salt が無効です',
+            'errors.challenge.question_tag_invalid': '質問の検証タグが無効です',
             'errors.challenge.too_many_variants': '1 問あたりの答えバリアントが多すぎます（最大 {max}）',
             'errors.challenge.answer_variants_count_invalid': '答えバリアント数が無効です',
             'errors.challenge.moduli_not_coprime': '法が互いに素ではありません',
@@ -473,7 +482,7 @@
         },
         'zh-TW': {
             'app.title': 'ShardKey - 答題解鎖秘密',
-            'app.tagline': '透過回答問題解鎖秘密的門檻共享工具',
+            'app.tagline': '透過回答問題離線解鎖秘密的工具',
             'ui.language': '語言',
             'tabs.create': '建立挑戰',
             'tabs.solve': '求解挑戰',
@@ -491,7 +500,7 @@
             'create.questions.add': '+ 新增問題',
             'create.threshold.title': '門檻設定',
             'create.threshold.label': '門檻值',
-            'create.threshold.hint': '需要正確回答的最少問題數。值越大越安全，但也要求答題者知道更多答案。',
+            'create.threshold.hint': '至少需要答對多少題。值越大，需要知道的答案越多，也更不容易被隨手猜中。',
             'create.question_count.label': '問題總數',
             'create.generate': '生成挑戰',
 
@@ -508,11 +517,13 @@
             'create.answer.placeholder_indexed': '答案 {n}（不區分大小寫）',
 
             'solve.load.title': '載入挑戰',
-            'solve.load.desc': '可透過連結自動載入，或手動匯入挑戰檔案。',
+            'solve.load.desc': '可透過網址雜湊自動載入，或手動匯入挑戰檔案/連結。',
             'solve.load.from_file': '從檔案匯入',
             'solve.load.paste_link': '貼上連結',
             'solve.load.link_placeholder': '貼上包含挑戰資料的連結...',
             'solve.load.load': '載入',
+            'solve.load.note': '所有處理都在瀏覽器本機完成；弱答案仍可能被離線猜解。',
+            'solve.change': '更換挑戰',
             'solve.questions.title': '回答問題',
             'solve.unlock': '解鎖秘密',
             'solve.solving': '求解中...',
@@ -525,7 +536,7 @@
             'solve.answer.placeholder': '輸入你的答案（不知道可以留空）',
             'solve.unlocked.detail': '已填寫 {answered} 個答案，使用其中 {used} 個恢復秘密。',
 
-            'footer.text': 'ShardKey · 中國剩餘定理 + Mignotte 門檻方案',
+            'footer.text': 'ShardKey · 離線問答解鎖器',
 
             'ui.error.title': '錯誤',
             'ui.load_failed.title': '載入失敗',
@@ -536,14 +547,14 @@
             'runtime.not_supported.after_example': '）。',
 
             'defaults.challenge_title': '秘密挑戰',
-            'defaults.challenge_desc': '回答問題來取得秘密！',
+            'defaults.challenge_desc': '在這個離線問答解鎖器中回答問題來取得秘密！',
 
             'progress.generating_moduli': '正在生成素數模數...',
             'progress.computing_xor_mask': '正在計算 XOR 掩碼...',
 
             'generate.success.title': '挑戰建立成功！',
-            'generate.share_intro.link': '分享以下連結給你的朋友。他們需要正確回答至少 {threshold} 個問題才能取得秘密。',
-            'generate.share_intro.large': '挑戰資料較大，請使用「下載 JSON 檔」分享給你的朋友。他們需要正確回答至少 {threshold} 個問題才能取得秘密。',
+            'generate.share_intro.link': '分享以下連結給你的朋友。他們可以在離線問答解鎖器中開啟它，並至少答對 {threshold} 個問題來取得秘密。',
+            'generate.share_intro.large': '挑戰資料較大，建議透過「下載 JSON 檔」離線分享給朋友。他們至少答對 {threshold} 個問題後才能取得秘密。',
             'generate.copy_link': '複製連結',
             'generate.copied': '已複製！',
             'generate.copy_failed': '複製失敗',
@@ -614,6 +625,7 @@
             'errors.challenge.question_params_invalid_format': '題目參數格式無效',
             'errors.challenge.question_params_invalid_value': '題目參數取值無效',
             'errors.challenge.question_salt_invalid': '題目 salt 無效',
+            'errors.challenge.question_tag_invalid': '題目校驗標籤無效',
             'errors.challenge.too_many_variants': '單題答案變體過多（最多 {max} 個）',
             'errors.challenge.answer_variants_count_invalid': '題目答案變體數量無效',
             'errors.challenge.moduli_not_coprime': '模數不是兩兩互質',
