@@ -41,6 +41,12 @@ async function runTaskLocally(taskType, payload, onProgress) {
     if (taskType === 'recover') {
         return await recoverSecret(payload.challenge, payload.answers);
     }
+    if (taskType === 'generate-shards') {
+        return await generateShards(payload.secret, payload.totalShards, payload.threshold, onProgress);
+    }
+    if (taskType === 'recover-shards') {
+        return await recoverFromShards(payload.shards);
+    }
     throw new Error('Unknown task type: ' + taskType);
 }
 
@@ -134,6 +140,7 @@ async function runWorkerTask(taskType, payload, onProgress) {
 var LIMITS = {
     maxQuestions: 64,
     maxThreshold: 64,
+    maxShardCount: 20,
     maxSecretBytes: 1024,
     maxUrlHashChars: 20000,
     maxChallengeFileBytes: 250000,
@@ -143,6 +150,7 @@ var LIMITS = {
     maxHintChars: 300,
     maxBigIntDigits: 1400,
     maxBase64UrlChars: 30000,
+    maxShardTextChars: 50000,
 };
 
 // =====================================================================
@@ -393,6 +401,15 @@ function bytesToBigInt(bytes) {
         hex += b.toString(16).padStart(2, '0');
     }
     return BigInt('0x' + hex);
+}
+
+function bytesToHex(bytes) {
+    if (!bytes || bytes.length === 0) return '';
+    let hex = '';
+    for (const b of bytes) {
+        hex += b.toString(16).padStart(2, '0');
+    }
+    return hex;
 }
 
 function bigIntToBytes(n, byteLength) {
@@ -658,32 +675,6 @@ function challengeToURL(obj) {
     return baseURL + '#' + base64;
 }
 
-function challengeFromURL() {
-    const hash = window.location.hash;
-    if (!hash || hash.length < 2) return null;
-    try {
-        if (hash.length - 1 > LIMITS.maxUrlHashChars) {
-            return null;
-        }
-        return challengeFromBase64(hash.substring(1));
-    } catch (e) {
-        return null;
-    }
-}
-
-function parseChallengeFromURLDetailed() {
-    const hash = window.location.hash;
-    if (!hash || hash.length < 2) return { challenge: null, error: null };
-    if (hash.length - 1 > LIMITS.maxUrlHashChars) {
-        return { challenge: null, error: t('errors.link.too_long_use_json') };
-    }
-    try {
-        return { challenge: challengeFromBase64(hash.substring(1)), error: null };
-    } catch (e) {
-        return { challenge: null, error: e.message || t('errors.link.parse_failed') };
-    }
-}
-
 function challengeToFile(obj, filename) {
     const json = JSON.stringify(obj, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
@@ -718,6 +709,241 @@ function challengeFromFile(file) {
         reader.onerror = function () { reject(new Error(t('errors.file.read_failed'))); };
         reader.readAsText(file);
     });
+}
+
+async function hashToHex(data) {
+    return bytesToHex(await sha256Bytes(data));
+}
+
+async function checksumMatches(secretText, checksum) {
+    if (typeof checksum !== 'string') return false;
+    var secretBytes = new TextEncoder().encode(String(secretText || ''));
+    var actual = (await hashToHex(secretBytes)).toLowerCase();
+    return actual.substring(0, checksum.length) === checksum.toLowerCase();
+}
+
+function secretToBigInt(text) {
+    var bytes = new TextEncoder().encode(String(text || ''));
+    if (bytes.length === 0) {
+        return { value: 0n, byteLength: 0 };
+    }
+    return {
+        value: bytesToBigInt(bytes),
+        byteLength: bytes.length,
+    };
+}
+
+function bigIntToSecret(n, byteLength) {
+    if (byteLength === 0) return '';
+    return new TextDecoder().decode(bigIntToBytes(n, byteLength));
+}
+
+function packShardForShare(shard) {
+    var normalized = validateShardData(shard);
+    var modulusBigInt = BigInt(normalized.modulus);
+    var remainderBigInt = BigInt(normalized.remainder);
+    var modulusHexLen = modulusBigInt.toString(16).length;
+    var remainderHexLen = remainderBigInt.toString(16).length;
+    var modulusByteLen = Math.ceil(modulusHexLen / 2);
+    var remainderByteLen = Math.ceil(remainderHexLen / 2);
+    return [
+        2,
+        normalized.challengeId,
+        normalized.shardIndex,
+        normalized.totalShards,
+        normalized.threshold,
+        normalized.secretByteLength,
+        normalized.secretChecksum,
+        bytesToBase64Url(bigIntToBytes(modulusBigInt, modulusByteLen)),
+        bytesToBase64Url(bigIntToBytes(remainderBigInt, remainderByteLen)),
+    ];
+}
+
+function unpackShardFromShare(value) {
+    if (!Array.isArray(value) || value[0] !== 2 || value.length !== 9) {
+        throw new Error(t('errors.shard.link.invalid_data'));
+    }
+    return validateShardData({
+        type: 'shard',
+        version: 3,
+        challengeId: String(value[1]),
+        shardIndex: Number(value[2]),
+        totalShards: Number(value[3]),
+        threshold: Number(value[4]),
+        secretByteLength: Number(value[5]),
+        secretChecksum: String(value[6]),
+        secretEncoding: 'offset-base256',
+        modulus: bytesToBigInt(base64UrlToBytes(String(value[7]))).toString(),
+        remainder: bytesToBigInt(base64UrlToBytes(String(value[8]))).toString(),
+    });
+}
+
+function shardToBase64(shard) {
+    var packed = packShardForShare(shard);
+    var json = JSON.stringify(packed);
+    var bytes = new TextEncoder().encode(json);
+    var binary = '';
+    for (var i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function shardFromBase64(base64url) {
+    if (typeof base64url !== 'string' || base64url.length === 0) {
+        throw new Error(t('errors.shard.link.invalid_data'));
+    }
+    if (base64url.length > LIMITS.maxUrlHashChars) {
+        throw new Error(t('errors.shard.link.too_long'));
+    }
+    if (!/^[0-9A-Za-z_-]+$/.test(base64url)) {
+        throw new Error(t('errors.shard.link.invalid_data'));
+    }
+
+    var base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+    while (base64.length % 4 !== 0) {
+        base64 += '=';
+    }
+
+    var binary = atob(base64);
+    var bytes = new Uint8Array(binary.length);
+    for (var i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+
+    var json = new TextDecoder().decode(bytes);
+    return unpackShardFromShare(JSON.parse(json));
+}
+
+function shardToURL(shard) {
+    var base64 = shardToBase64(shard);
+    var baseURL = window.location.href.split('#')[0];
+    try {
+        var url = new URL(baseURL);
+        url.search = '';
+        baseURL = url.toString();
+    } catch (e) {
+    }
+    return baseURL + '#shard:' + base64;
+}
+
+function parseSolveHashData(hashData) {
+    var trimmed = String(hashData || '').trim().replace(/^#/, '');
+    if (!trimmed) {
+        throw new Error(t('errors.solve.link_no_data'));
+    }
+
+    if (trimmed.indexOf('shard:') === 0) {
+        var shardPayload = trimmed.substring(6);
+        return {
+            type: 'shard',
+            modeHint: 'shard',
+            hashData: trimmed,
+            payload: shardFromBase64(shardPayload),
+        };
+    }
+
+    return {
+        type: 'challenge',
+        modeHint: 'classic',
+        hashData: trimmed,
+        payload: challengeFromBase64(trimmed),
+    };
+}
+
+function parseSolveDataFromURLDetailed() {
+    var hash = window.location.hash;
+    if (!hash || hash.length < 2) {
+        return { type: '', payload: null, error: null, modeHint: null, hashData: '' };
+    }
+    if (hash.length - 1 > LIMITS.maxUrlHashChars) {
+        return {
+            type: '',
+            payload: null,
+            error: t('errors.link.too_long_use_json'),
+            modeHint: hash.indexOf('#shard:') === 0 ? 'shard' : 'classic',
+            hashData: '',
+        };
+    }
+    try {
+        return parseSolveHashData(hash.substring(1));
+    } catch (e) {
+        return {
+            type: '',
+            payload: null,
+            error: e.message || t('errors.link.parse_failed'),
+            modeHint: hash.indexOf('#shard:') === 0 ? 'shard' : 'classic',
+            hashData: '',
+        };
+    }
+}
+
+function parseSolveHashFromLink(link) {
+    var trimmed = String(link || '').trim();
+    if (!trimmed) {
+        throw new Error(t('errors.solve.link_no_data'));
+    }
+
+    if (/^#?shard:/i.test(trimmed)) {
+        return parseSolveHashData(trimmed.replace(/^#/, ''));
+    }
+
+    var hashIndex = trimmed.indexOf('#');
+    if (hashIndex !== -1 && hashIndex < trimmed.length - 1) {
+        return parseSolveHashData(trimmed.substring(hashIndex + 1));
+    }
+
+    throw new Error(t('errors.solve.link_no_data'));
+}
+
+function parseShardInputText(rawText) {
+    var text = String(rawText || '').trim();
+    if (!text) {
+        throw new Error(t('errors.shard.input.empty'));
+    }
+
+    if (text.length > LIMITS.maxShardTextChars) {
+        throw new Error(t('errors.shard.input.too_large'));
+    }
+
+    if (text[0] === '{') {
+        return validateShardData(JSON.parse(text));
+    }
+
+    if (text[0] === '[') {
+        throw new Error(t('errors.shard.input.single_only'));
+    }
+
+    var parsed = parseSolveHashFromLink(text);
+    if (parsed.type !== 'shard') {
+        throw new Error(t('errors.shard.input.expect_single'));
+    }
+    return parsed.payload;
+}
+
+function parseShardLoadText(rawText) {
+    var text = String(rawText || '').trim();
+    if (!text) {
+        throw new Error(t('errors.shard.input.empty'));
+    }
+
+    if (text.length > LIMITS.maxShardTextChars) {
+        throw new Error(t('errors.shard.input.too_large'));
+    }
+
+    if (text[0] === '[') {
+        return normalizeShardCollection(JSON.parse(text));
+    }
+
+    if (text[0] === '{') {
+        return [validateShardData(JSON.parse(text))];
+    }
+
+    var parsed = parseSolveHashFromLink(text);
+    if (parsed.type !== 'shard') {
+        throw new Error(t('errors.shard.input.expect_single'));
+    }
+    return [parsed.payload];
 }
 
 // =====================================================================
@@ -1180,17 +1406,251 @@ function validateChallengeData(challenge) {
     };
 }
 
+function validateShardData(shard) {
+    if (!isPlainObject(shard)) {
+        throw new Error(t('errors.shard.invalid_format'));
+    }
+
+    var version = Number(shard.version);
+    if (!Number.isInteger(version) || version !== 3) {
+        throw new Error(t('errors.shard.only_v3'));
+    }
+    if (String(shard.type || '') !== 'shard') {
+        throw new Error(t('errors.shard.type_invalid'));
+    }
+
+    var challengeId = String(shard.challengeId || '').toLowerCase();
+    if (!/^[0-9a-f]{8,64}$/.test(challengeId)) {
+        throw new Error(t('errors.shard.challenge_id_invalid'));
+    }
+
+    var totalShards = Number(shard.totalShards);
+    if (!Number.isInteger(totalShards) || totalShards < 2 || totalShards > LIMITS.maxShardCount) {
+        throw new Error(t('errors.shard.total_invalid', { max: LIMITS.maxShardCount }));
+    }
+
+    var threshold = Number(shard.threshold);
+    if (!Number.isInteger(threshold) || threshold < 2 || threshold > totalShards) {
+        throw new Error(t('errors.shard.threshold_invalid'));
+    }
+
+    var shardIndex = Number(shard.shardIndex);
+    if (!Number.isInteger(shardIndex) || shardIndex < 0 || shardIndex >= totalShards) {
+        throw new Error(t('errors.shard.index_invalid'));
+    }
+
+    var secretByteLength = Number(shard.secretByteLength);
+    if (!Number.isInteger(secretByteLength) || secretByteLength <= 0 || secretByteLength > LIMITS.maxSecretBytes) {
+        throw new Error(t('errors.shard.secret_length_invalid'));
+    }
+
+    var secretChecksum = String(shard.secretChecksum || '').toLowerCase();
+    if (!/^[0-9a-f]{16,64}$/.test(secretChecksum)) {
+        throw new Error(t('errors.shard.checksum_invalid'));
+    }
+
+    if (String(shard.secretEncoding || '') !== 'offset-base256') {
+        throw new Error(t('errors.shard.encoding_invalid'));
+    }
+
+    var modulusStr = String(shard.modulus || '');
+    if (!/^\d+$/.test(modulusStr) || modulusStr.length > LIMITS.maxBigIntDigits) {
+        throw new Error(t('errors.shard.modulus_invalid'));
+    }
+    var modulusBigInt = BigInt(modulusStr);
+    if (modulusBigInt <= 2n) {
+        throw new Error(t('errors.shard.modulus_invalid'));
+    }
+
+    var remainderStr = String(shard.remainder || '');
+    if (!/^\d+$/.test(remainderStr) || remainderStr.length > LIMITS.maxBigIntDigits) {
+        throw new Error(t('errors.shard.remainder_invalid'));
+    }
+    var remainderBigInt = BigInt(remainderStr);
+    if (remainderBigInt < 0n || remainderBigInt >= modulusBigInt) {
+        throw new Error(t('errors.shard.remainder_invalid'));
+    }
+
+    return {
+        type: 'shard',
+        version: version,
+        challengeId: challengeId,
+        shardIndex: shardIndex,
+        totalShards: totalShards,
+        threshold: threshold,
+        secretByteLength: secretByteLength,
+        secretChecksum: secretChecksum,
+        secretEncoding: 'offset-base256',
+        modulus: modulusBigInt.toString(),
+        remainder: remainderBigInt.toString(),
+    };
+}
+
+function normalizeShardCollection(value) {
+    if (!Array.isArray(value) || value.length === 0) {
+        throw new Error(t('errors.shard.collection_empty'));
+    }
+
+    var normalized = value.map(validateShardData);
+    var first = normalized[0];
+    for (var i = 1; i < normalized.length; i++) {
+        var shard = normalized[i];
+        if (
+            shard.challengeId !== first.challengeId ||
+            shard.threshold !== first.threshold ||
+            shard.totalShards !== first.totalShards ||
+            shard.secretByteLength !== first.secretByteLength ||
+            shard.secretChecksum !== first.secretChecksum ||
+            shard.secretEncoding !== first.secretEncoding
+        ) {
+            throw new Error(t('errors.shard.mixed_collection'));
+        }
+    }
+
+    return normalized;
+}
+
+async function generateShards(secret, totalShards, threshold, onProgress) {
+    if (!secret) throw new Error(t('errors.shard.secret_empty'));
+    if (totalShards < 2 || totalShards > LIMITS.maxShardCount) {
+        throw new Error(t('errors.shard.total_invalid', { max: LIMITS.maxShardCount }));
+    }
+    if (threshold < 2) {
+        throw new Error(t('errors.shard.threshold_invalid'));
+    }
+    if (threshold > totalShards) {
+        throw new Error(t('errors.shard.threshold_gt_total'));
+    }
+
+    var secretBytes = new TextEncoder().encode(secret);
+    if (secretBytes.length > LIMITS.maxSecretBytes) {
+        throw new Error(t('validation.secret.too_long', { max: LIMITS.maxSecretBytes }));
+    }
+
+    var rawResult = secretToBigInt(secret);
+    var rawSecretValue = rawResult.value;
+    var byteLength = rawResult.byteLength;
+    var secretBits = Math.max(1, byteLength * 8);
+    var modBits = calculateModulusBitSize(secretBits, threshold);
+
+    var moduli = null;
+    var encodedSecret = null;
+    var maxAttempts = 8;
+
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+        var bitSizeForAttempt = modBits + attempt * 2;
+        if (onProgress) onProgress(t('progress.generating_moduli'), 0, totalShards);
+        moduli = await generateModuli(totalShards, bitSizeForAttempt, function (done, total) {
+            if (onProgress) onProgress(t('progress.generating_moduli'), done, total);
+        });
+
+        var bounds = calculateMignotteBounds(moduli, threshold);
+        if (bounds.alpha <= bounds.beta) {
+            await yieldToUI();
+            continue;
+        }
+
+        try {
+            encodedSecret = chooseEncodedSecret(rawSecretValue, byteLength, bounds.alpha, bounds.beta);
+            break;
+        } catch (e) {
+            if (attempt === maxAttempts - 1) throw e;
+            await yieldToUI();
+        }
+    }
+
+    if (!moduli || encodedSecret === null) {
+        throw new Error(t('errors.shard.generate_failed'));
+    }
+
+    var checksum = (await hashToHex(secretBytes)).substring(0, 32);
+    var challengeId = (await hashToHex(new TextEncoder().encode(secret + '|' + Date.now() + '|' + Math.random()))).substring(0, 16);
+
+    var shards = [];
+    for (var i = 0; i < totalShards; i++) {
+        var modulus = moduli[i];
+        var remainder = ((encodedSecret % modulus) + modulus) % modulus;
+        shards.push({
+            type: 'shard',
+            version: 3,
+            challengeId: challengeId,
+            shardIndex: i,
+            totalShards: totalShards,
+            threshold: threshold,
+            secretByteLength: byteLength,
+            secretChecksum: checksum,
+            secretEncoding: 'offset-base256',
+            modulus: modulus.toString(),
+            remainder: remainder.toString(),
+        });
+    }
+
+    return shards;
+}
+
+async function recoverFromShards(shards) {
+    var normalized = normalizeShardCollection(shards);
+    var first = normalized[0];
+    var threshold = first.threshold;
+
+    if (normalized.length < threshold) {
+        throw new Error(t('errors.shard.need_more', { threshold: threshold, count: normalized.length }));
+    }
+
+    var seenIndices = new Set();
+    var moduli = [];
+    var remainders = [];
+
+    for (var i = 0; i < normalized.length; i++) {
+        var shard = normalized[i];
+        if (seenIndices.has(shard.shardIndex)) {
+            throw new Error(t('errors.shard.duplicate_index', { index: shard.shardIndex + 1 }));
+        }
+        seenIndices.add(shard.shardIndex);
+
+        var modulusBigInt = BigInt(shard.modulus);
+        for (var j = 0; j < moduli.length; j++) {
+            if (gcd(moduli[j], modulusBigInt) !== 1n) {
+                throw new Error(t('errors.shard.moduli_not_coprime'));
+            }
+        }
+
+        moduli.push(modulusBigInt);
+        remainders.push(BigInt(shard.remainder));
+    }
+
+    var recovered = solveCRT(remainders, moduli);
+    var base = getSecretValueBase(first.secretByteLength);
+    var decodedValue = ((recovered % base) + base) % base;
+    var secretText = bigIntToSecret(decodedValue, first.secretByteLength);
+
+    var isMatch = await checksumMatches(secretText, first.secretChecksum);
+    if (!isMatch) {
+        throw new Error(t('errors.shard.checksum_mismatch'));
+    }
+
+    return secretText;
+}
+
 // =====================================================================
 // main.js — 入口：模式切换、URL 检测、事件绑定
 // =====================================================================
 
 var appQuestions = [];
+var currentAppMode = 'classic';
 var currentChallenge = null;
+var currentShardMergeState = null;
 var questionIdCounter = 0;
 
 var tabBtns = document.querySelectorAll('.tab-btn');
 var panelCreate = document.getElementById('panel-create');
 var panelSolve = document.getElementById('panel-solve');
+var modeSwitch = document.getElementById('app-mode-switch');
+var modeOptions = document.querySelectorAll('.mode-option');
+var createClassicContent = document.getElementById('create-classic-content');
+var createShardContent = document.getElementById('create-shard-content');
+var solveClassicMode = document.getElementById('solve-classic-mode');
+var solveShardMode = document.getElementById('solve-shard-mode');
 
 var runtimeWarningEl = document.getElementById('runtime-warning');
 
@@ -1206,6 +1666,14 @@ var generateProgress = document.getElementById('generate-progress');
 var progressFill = document.getElementById('progress-fill');
 var progressText = document.getElementById('progress-text');
 var generateResult = document.getElementById('generate-result');
+var shardSecretInput = document.getElementById('shard-secret-input');
+var shardTotalInput = document.getElementById('shard-total');
+var shardThresholdInput = document.getElementById('shard-threshold');
+var btnGenerateShards = document.getElementById('btn-generate-shards');
+var shardGenerateProgress = document.getElementById('shard-generate-progress');
+var shardProgressFill = document.getElementById('shard-progress-fill');
+var shardProgressText = document.getElementById('shard-progress-text');
+var shardGenerateResult = document.getElementById('shard-generate-result');
 
 var solveLoadCard = document.getElementById('solve-load-card');
 var solveContent = document.getElementById('solve-content');
@@ -1221,6 +1689,21 @@ var pasteLinkArea = document.getElementById('paste-link-area');
 var pasteLinkInput = document.getElementById('paste-link-input');
 var btnLoadLink = document.getElementById('btn-load-link');
 var btnChangeChallenge = document.getElementById('btn-change-challenge');
+var shardFileImport = document.getElementById('shard-file-import');
+var btnPasteShard = document.getElementById('btn-paste-shard');
+var pasteShardArea = document.getElementById('paste-shard-area');
+var pasteShardInput = document.getElementById('paste-shard-input');
+var btnLoadShard = document.getElementById('btn-load-shard');
+var solveShardLoadCard = document.getElementById('solve-shard-load-card');
+var solveShardLoadError = document.getElementById('solve-shard-load-error');
+var shardMergeCard = document.getElementById('shard-merge-card');
+var shardMergeMeta = document.getElementById('shard-merge-meta');
+var shardMergeHint = document.getElementById('shard-merge-hint');
+var shardMergeInputs = document.getElementById('shard-merge-inputs');
+var btnAddShardInput = document.getElementById('btn-add-shard-input');
+var btnMergeShards = document.getElementById('btn-merge-shards');
+var btnChangeShardSet = document.getElementById('btn-change-shard-set');
+var shardMergeResult = document.getElementById('shard-merge-result');
 
 function switchTab(tabName) {
     tabBtns.forEach(function (btn) { btn.classList.toggle('active', btn.dataset.tab === tabName); });
@@ -1232,6 +1715,12 @@ tabBtns.forEach(function (btn) {
     btn.addEventListener('click', function () { switchTab(btn.dataset.tab); });
 });
 
+modeOptions.forEach(function (option) {
+    option.addEventListener('click', function () {
+        setAppMode(option.dataset.mode);
+    });
+});
+
 function escapeHtml(text) {
     var div = document.createElement('div');
     div.textContent = text;
@@ -1240,7 +1729,11 @@ function escapeHtml(text) {
 
 var langSelectEl = document.getElementById('lang-select');
 var lastGeneratedState = null;
+var lastGeneratedShardState = null;
 var currentChallengeSource = '';
+var currentShardSource = '';
+var lastSolveOutcome = null;
+var lastShardMergeOutcome = null;
 
 function applyStaticI18n() {
     document.querySelectorAll('[data-i18n]').forEach(function (el) {
@@ -1263,18 +1756,53 @@ function syncLangSelect() {
     langSelectEl.setAttribute('aria-label', t('ui.language'));
 }
 
+function setAppMode(mode) {
+    if (mode !== 'classic' && mode !== 'shard') {
+        mode = 'classic';
+    }
+    currentAppMode = mode;
+
+    modeOptions.forEach(function (option) {
+        option.classList.toggle('active', option.dataset.mode === mode);
+    });
+
+    if (createClassicContent) {
+        createClassicContent.classList.toggle('hidden', mode !== 'classic');
+    }
+    if (createShardContent) {
+        createShardContent.classList.toggle('hidden', mode !== 'shard');
+    }
+    if (solveClassicMode) {
+        solveClassicMode.classList.toggle('hidden', mode !== 'classic');
+    }
+    if (solveShardMode) {
+        solveShardMode.classList.toggle('hidden', mode !== 'shard');
+    }
+}
+
 function rerenderAll() {
+    snapshotShardMergeInputState();
     applyStaticI18n();
     checkRuntimeSupport();
+    setAppMode(currentAppMode);
     renderQuestions();
     if (lastGeneratedState) {
         renderGenerateResult(lastGeneratedState);
+    }
+    if (lastGeneratedShardState) {
+        renderShardGenerateResult(lastGeneratedShardState);
     }
     if (currentChallenge) {
         renderSolveChallenge(currentChallenge, true);
     }
     if (btnSolve && btnSolve.disabled) {
         btnSolve.textContent = t('solve.solving');
+    }
+    if (currentShardMergeState) {
+        renderShardMergeUI(true);
+    }
+    if (btnMergeShards && btnMergeShards.disabled) {
+        btnMergeShards.textContent = t('solve.shard.merge.loading');
     }
 }
 
@@ -1424,17 +1952,160 @@ function replaceLocationHash(hashValue) {
 }
 
 function parseChallengeHashFromLink(link) {
-    var trimmed = String(link || '').trim();
-    if (!trimmed) {
-        throw new Error(t('errors.solve.link_no_data'));
+    var parsed = parseSolveHashFromLink(link);
+    if (parsed.type !== 'challenge') {
+        throw new Error(t('errors.solve.link_expected_challenge'));
+    }
+    return parsed.hashData;
+}
+
+function showShardLoadError(msg) {
+    if (!solveShardLoadError) return;
+    if (!msg) {
+        solveShardLoadError.classList.add('hidden');
+        solveShardLoadError.innerHTML = '';
+        return;
+    }
+    solveShardLoadError.classList.remove('hidden');
+    solveShardLoadError.innerHTML =
+        '<div class="result-box error">' +
+            '<div class="result-label">' + escapeHtml(t('ui.load_failed.title')) + '</div>' +
+            '<p>' + escapeHtml(msg) + '</p>' +
+        '</div>';
+}
+
+function snapshotShardMergeInputState() {
+    if (!currentShardMergeState || !shardMergeInputs) return;
+    currentShardMergeState.inputs = Array.prototype.map.call(
+        shardMergeInputs.querySelectorAll('.shard-merge-data'),
+        function (input) {
+            return {
+                value: input.value,
+                readOnly: !!input.readOnly,
+            };
+        }
+    );
+}
+
+function setShardLoadedState(loaded) {
+    if (solveShardLoadCard) {
+        solveShardLoadCard.classList.toggle('hidden', loaded);
+    }
+    if (shardMergeCard) {
+        shardMergeCard.classList.toggle('hidden', !loaded);
+    }
+}
+
+function resetShardSolveState(clearError) {
+    currentShardMergeState = null;
+    currentShardSource = '';
+    lastShardMergeOutcome = null;
+
+    if (shardMergeMeta) shardMergeMeta.textContent = '';
+    if (shardMergeInputs) shardMergeInputs.innerHTML = '';
+    if (shardMergeResult) {
+        shardMergeResult.classList.add('hidden');
+        shardMergeResult.innerHTML = '';
+    }
+    if (btnMergeShards) {
+        btnMergeShards.disabled = false;
+        btnMergeShards.textContent = t('solve.shard.merge.submit');
+    }
+    if (pasteShardArea) pasteShardArea.classList.add('hidden');
+    if (pasteShardInput) pasteShardInput.value = '';
+
+    if (clearError) {
+        showShardLoadError('');
     }
 
-    var hashIndex = trimmed.indexOf('#');
-    if (hashIndex === -1 || hashIndex === trimmed.length - 1) {
-        throw new Error(t('errors.solve.link_no_data'));
+    setShardLoadedState(false);
+}
+
+function buildShardInputStateFromShards(shards, lockPrefilled) {
+    var inputs = shards.map(function (shard, index) {
+        return {
+            value: JSON.stringify(shard, null, 2),
+            readOnly: !!lockPrefilled && index === 0,
+        };
+    });
+    var threshold = shards[0] ? shards[0].threshold : 3;
+    while (inputs.length < threshold) {
+        inputs.push({ value: '', readOnly: false });
+    }
+    return inputs;
+}
+
+function renderShardMergeResult(outcome) {
+    if (!outcome || !shardMergeResult) {
+        if (shardMergeResult) {
+            shardMergeResult.classList.add('hidden');
+            shardMergeResult.innerHTML = '';
+        }
+        return;
+    }
+    shardMergeResult.classList.remove('hidden');
+
+    if (outcome.success) {
+        shardMergeResult.innerHTML =
+            '<div class="result-box success shard-success-glow">' +
+                '<div class="result-label">' + escapeHtml(t('solve.shard.merge.success_title')) + '</div>' +
+                '<div class="result-value">' + escapeHtml(outcome.secret) + '</div>' +
+                '<p class="shard-merge-intro">' +
+                    escapeHtml(t('solve.shard.merge.success_detail', { used: outcome.usedCount || 0, threshold: outcome.threshold || 0 })) +
+                '</p>' +
+            '</div>';
+        return;
     }
 
-    return trimmed.substring(hashIndex + 1);
+    shardMergeResult.innerHTML =
+        '<div class="result-box error">' +
+            '<div class="result-label">' + escapeHtml(outcome.isError ? t('ui.error.title') : t('solve.shard.merge.failed_title')) + '</div>' +
+            '<p>' + escapeHtml(outcome.error || '') + '</p>' +
+        '</div>';
+}
+
+function renderShardMergeUI(preserveValues) {
+    if (!currentShardMergeState || !shardMergeInputs) return;
+
+    if (preserveValues) {
+        snapshotShardMergeInputState();
+    }
+
+    var state = currentShardMergeState;
+    var inputs = Array.isArray(state.inputs) ? state.inputs.slice() : [];
+    var targetCount = Math.max(state.threshold, inputs.length || 0);
+    while (inputs.length < targetCount) {
+        inputs.push({ value: '', readOnly: false });
+    }
+    state.inputs = inputs;
+
+    shardMergeMeta.textContent = t('solve.shard.merge.meta', {
+        threshold: state.threshold,
+        total: state.totalShards,
+        id: state.challengeId.slice(0, 8),
+    });
+    if (shardMergeHint) {
+        shardMergeHint.textContent = t('solve.shard.merge.hint', { threshold: state.threshold });
+    }
+
+    shardMergeInputs.innerHTML = '';
+    state.inputs.forEach(function (entry, index) {
+        var wrapper = document.createElement('div');
+        wrapper.className = 'shard-merge-input';
+        wrapper.innerHTML =
+            '<label>' +
+                '<span>' + escapeHtml(t('solve.shard.merge.input_label', { n: index + 1 })) + '</span>' +
+                (entry.readOnly ? '<span class="input-note">' + escapeHtml(t('solve.shard.merge.input_locked')) + '</span>' : '') +
+            '</label>' +
+            '<textarea class="shard-merge-data" data-index="' + index + '" placeholder="' + escapeHtml(t('solve.shard.merge.input_placeholder')) + '"' + (entry.readOnly ? ' readonly' : '') + '>' + escapeHtml(entry.value || '') + '</textarea>';
+        shardMergeInputs.appendChild(wrapper);
+    });
+
+    if (!shardMergeResult.classList.contains('hidden') && lastShardMergeOutcome) {
+        renderShardMergeResult(lastShardMergeOutcome);
+    }
+
+    setShardLoadedState(true);
 }
 
 function addQuestion(text, answer, hint) {
@@ -1575,6 +2246,63 @@ addQuestion();
 addQuestion();
 
 initI18nUI();
+
+btnGenerateShards.addEventListener('click', async function () {
+    lastGeneratedShardState = null;
+    var secret = shardSecretInput.value.trim();
+    if (!secret) {
+        showShardGenerateError(t('errors.shard.secret_empty'));
+        return;
+    }
+
+    var totalShards = Number.parseInt(shardTotalInput.value, 10);
+    var threshold = Number.parseInt(shardThresholdInput.value, 10);
+
+    if (Number.isNaN(totalShards) || totalShards < 2 || totalShards > LIMITS.maxShardCount) {
+        showShardGenerateError(t('errors.shard.total_invalid', { max: LIMITS.maxShardCount }));
+        return;
+    }
+    if (Number.isNaN(threshold) || threshold < 2) {
+        showShardGenerateError(t('errors.shard.threshold_invalid'));
+        return;
+    }
+    if (threshold > totalShards) {
+        showShardGenerateError(t('errors.shard.threshold_gt_total'));
+        return;
+    }
+
+    btnGenerateShards.disabled = true;
+    shardGenerateProgress.classList.remove('hidden');
+    shardGenerateResult.classList.add('hidden');
+
+    try {
+        var shards = await runWorkerTask(
+            'generate-shards',
+            {
+                secret: secret,
+                totalShards: totalShards,
+                threshold: threshold,
+            },
+            function (msg, done, total) {
+                var pct = total > 0 ? Math.round((done / total) * 100) : 0;
+                shardProgressFill.style.width = pct + '%';
+                shardProgressText.textContent = msg + ' (' + done + '/' + total + ')';
+            }
+        );
+
+        lastGeneratedShardState = {
+            shards: shards,
+            totalShards: totalShards,
+            threshold: threshold,
+        };
+        renderShardGenerateResult(lastGeneratedShardState);
+    } catch (e) {
+        showShardGenerateError(e.message || t('errors.shard.generate_failed'));
+    } finally {
+        btnGenerateShards.disabled = false;
+        shardGenerateProgress.classList.add('hidden');
+    }
+});
 
 btnGenerate.addEventListener('click', async function () {
     lastGeneratedState = null;
@@ -1776,9 +2504,104 @@ function renderGenerateResult(state) {
     }
 }
 
+function showShardGenerateError(msg) {
+    shardGenerateResult.classList.remove('hidden');
+    shardGenerateResult.innerHTML =
+        '<div class="result-box error">' +
+            '<div class="result-label">' + escapeHtml(t('ui.error.title')) + '</div>' +
+            '<p>' + escapeHtml(msg) + '</p>' +
+        '</div>';
+}
+
+function renderShardGenerateResult(state) {
+    if (!state) return;
+
+    var itemsHtml = '';
+    state.shards.forEach(function (shard, index) {
+        var url = shardToURL(shard);
+        itemsHtml +=
+            '<div class="shard-link-item">' +
+                '<div class="shard-link-head">' +
+                    '<span class="shard-label">' + escapeHtml(t('create.shard.result.item_label', { n: index + 1 })) + '</span>' +
+                    '<button class="btn btn-secondary btn-copy-shard" data-index="' + index + '">' + escapeHtml(t('create.shard.result.copy')) + '</button>' +
+                '</div>' +
+                '<textarea class="share-link shard-share-link" readonly id="shard-link-' + index + '">' + escapeHtml(url) + '</textarea>' +
+            '</div>';
+    });
+
+    shardGenerateResult.classList.remove('hidden');
+    shardGenerateResult.innerHTML =
+        '<div class="result-box success">' +
+            '<div class="result-label">' + escapeHtml(t('create.shard.result.title')) + '</div>' +
+            '<p style="margin-bottom: 12px; font-size: 0.9em; color: var(--text-secondary);">' +
+                escapeHtml(t('create.shard.result.summary', { total: state.totalShards, threshold: state.threshold })) +
+            '</p>' +
+            '<div class="shard-link-list">' + itemsHtml + '</div>' +
+            '<div class="btn-group">' +
+                '<button class="btn btn-secondary" id="btn-download-shards-json">' + escapeHtml(t('create.shard.result.download')) + '</button>' +
+            '</div>' +
+        '</div>';
+
+    shardGenerateResult.querySelectorAll('.btn-copy-shard').forEach(function (button) {
+        button.addEventListener('click', function () {
+            var index = Number.parseInt(button.dataset.index, 10);
+            var textarea = document.getElementById('shard-link-' + index);
+            copyFromTextarea(textarea).then(function (ok) {
+                button.textContent = ok ? t('create.shard.result.copied') : t('generate.copy_failed');
+                setTimeout(function () {
+                    button.textContent = t('create.shard.result.copy');
+                }, 2000);
+            });
+        });
+    });
+
+    var btnDownloadShards = document.getElementById('btn-download-shards-json');
+    if (btnDownloadShards) {
+        btnDownloadShards.addEventListener('click', function () {
+            challengeToFile(state.shards, 'shards.json');
+        });
+    }
+}
+
+function loadShardCollection(shards, lockPrefilled) {
+    var normalized = normalizeShardCollection(shards);
+    currentShardMergeState = {
+        challengeId: normalized[0].challengeId,
+        threshold: normalized[0].threshold,
+        totalShards: normalized[0].totalShards,
+        inputs: buildShardInputStateFromShards(normalized, lockPrefilled),
+    };
+    lastShardMergeOutcome = null;
+    showShardLoadError('');
+    renderShardMergeUI(false);
+    switchTab('solve');
+    return true;
+}
+
+function loadShardCollectionFromSource(shards, options) {
+    options = options || {};
+    try {
+        setAppMode('shard');
+        loadShardCollection(shards, !!options.lockPrefilled);
+        currentShardSource = options.source || 'loaded';
+        if (options.hashData !== undefined) {
+            replaceLocationHash(options.hashData);
+        } else if (options.clearHash) {
+            replaceLocationHash('');
+        }
+        return true;
+    } catch (e) {
+        resetShardSolveState(false);
+        showShardLoadError(e.message || t('errors.shard.load_failed'));
+        switchTab('solve');
+        return false;
+    }
+}
+
 function loadChallenge(challenge) {
     try {
         const normalized = validateChallengeData(challenge);
+        setAppMode('classic');
         currentChallenge = normalized;
         currentChallengeSource = 'loaded';
         lastSolveOutcome = null;
@@ -1796,8 +2619,6 @@ function loadChallenge(challenge) {
         return false;
     }
 }
-
-var lastSolveOutcome = null;
 
 function loadChallengeFromSource(challenge, options) {
     options = options || {};
@@ -1910,12 +2731,55 @@ btnLoadLink.addEventListener('click', function () {
     var link = pasteLinkInput.value.trim();
     if (!link) return;
     try {
-        var data = parseChallengeHashFromLink(link);
-        var challenge = challengeFromBase64(data);
-        loadChallengeFromSource(challenge, { hashData: data, source: 'pasted-link' });
+        var parsed = parseSolveHashFromLink(link);
+        if (parsed.type !== 'challenge') {
+            throw new Error(t('errors.link.parse_failed'));
+        }
+        loadChallengeFromSource(parsed.payload, { hashData: parsed.hashData, source: 'pasted-link' });
     } catch (e) {
         resetSolveState(false);
         showSolveLoadError(e.message || t('errors.link.parse_failed'));
+        switchTab('solve');
+    }
+});
+
+shardFileImport.addEventListener('change', async function (e) {
+    var file = e.target.files[0];
+    if (!file) return;
+    try {
+        var loaded = await challengeFromFile(file);
+        var shards = Array.isArray(loaded) ? normalizeShardCollection(loaded) : [validateShardData(loaded)];
+        loadShardCollectionFromSource(shards, {
+            clearHash: true,
+            source: Array.isArray(loaded) ? 'shard-file-collection' : 'shard-file',
+            lockPrefilled: !Array.isArray(loaded),
+        });
+    } catch (err) {
+        resetShardSolveState(false);
+        showShardLoadError(err.message || t('errors.shard.load_failed'));
+        switchTab('solve');
+    }
+    shardFileImport.value = '';
+});
+
+btnPasteShard.addEventListener('click', function () {
+    pasteShardArea.classList.toggle('hidden');
+});
+
+btnLoadShard.addEventListener('click', function () {
+    var rawText = pasteShardInput.value.trim();
+    if (!rawText) return;
+    try {
+        var shards = parseShardLoadText(rawText);
+        loadShardCollectionFromSource(shards, {
+            source: shards.length > 1 ? 'pasted-shard-collection' : 'pasted-shard',
+            clearHash: shards.length > 1,
+            hashData: shards.length === 1 ? ('shard:' + shardToBase64(shards[0])) : undefined,
+            lockPrefilled: shards.length === 1,
+        });
+    } catch (e) {
+        resetShardSolveState(false);
+        showShardLoadError(e.message || t('errors.shard.load_failed'));
         switchTab('solve');
     }
 });
@@ -1960,14 +2824,80 @@ btnSolve.addEventListener('click', async function () {
     }
 });
 
+btnAddShardInput.addEventListener('click', function () {
+    if (!currentShardMergeState) return;
+    snapshotShardMergeInputState();
+    currentShardMergeState.inputs.push({ value: '', readOnly: false });
+    renderShardMergeUI(false);
+});
+
+btnChangeShardSet.addEventListener('click', function () {
+    if (currentShardSource === 'url-hash' || currentShardSource === 'pasted-shard') {
+        replaceLocationHash('');
+    }
+    resetShardSolveState(true);
+    switchTab('solve');
+});
+
+btnMergeShards.addEventListener('click', async function () {
+    if (!currentShardMergeState) return;
+
+    snapshotShardMergeInputState();
+    var shards = [];
+    try {
+        for (var i = 0; i < currentShardMergeState.inputs.length; i++) {
+            var rawText = String(currentShardMergeState.inputs[i].value || '').trim();
+            if (!rawText) continue;
+            shards.push(parseShardInputText(rawText));
+        }
+    } catch (e) {
+        lastShardMergeOutcome = { success: false, isError: true, error: e.message || '' };
+        renderShardMergeResult(lastShardMergeOutcome);
+        return;
+    }
+
+    btnMergeShards.disabled = true;
+    btnMergeShards.textContent = t('solve.shard.merge.loading');
+
+    try {
+        var secret = await runWorkerTask('recover-shards', { shards: shards });
+        lastShardMergeOutcome = {
+            success: true,
+            secret: secret,
+            usedCount: shards.length,
+            threshold: currentShardMergeState ? currentShardMergeState.threshold : 0,
+        };
+        renderShardMergeResult(lastShardMergeOutcome);
+    } catch (e) {
+        lastShardMergeOutcome = { success: false, isError: true, error: e.message || '' };
+        renderShardMergeResult(lastShardMergeOutcome);
+    } finally {
+        btnMergeShards.disabled = false;
+        btnMergeShards.textContent = t('solve.shard.merge.submit');
+    }
+});
+
 function checkURLChallenge() {
-    var parsed = parseChallengeFromURLDetailed();
-    if (parsed.challenge) {
-        loadChallengeFromSource(parsed.challenge, { source: 'url-hash' });
+    var parsed = parseSolveDataFromURLDetailed();
+    if (parsed.type === 'challenge' && parsed.payload) {
+        loadChallengeFromSource(parsed.payload, { source: 'url-hash' });
+        return;
+    }
+    if (parsed.type === 'shard' && parsed.payload) {
+        loadShardCollectionFromSource([parsed.payload], {
+            source: 'url-hash',
+            hashData: parsed.hashData,
+            lockPrefilled: true,
+        });
         return;
     }
     resetSolveState(!parsed.error);
-    if (parsed.error) {
+    resetShardSolveState(!parsed.error);
+    if (parsed.error && parsed.modeHint === 'shard') {
+        setAppMode('shard');
+        showShardLoadError(parsed.error);
+    } else if (parsed.error) {
+        setAppMode('classic');
         showSolveLoadError(parsed.error);
     }
 }

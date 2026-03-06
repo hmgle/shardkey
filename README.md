@@ -2,8 +2,10 @@
 
 [中文](README.zh-CN.md)
 
-ShardKey is a browser-only offline question-and-answer unlocker for shared secrets.
-You define questions, answers, and a threshold (minimum correct answers required). The app generates a shareable link or JSON challenge, and the secret can only be recovered when enough answers are correct.
+ShardKey is a browser-only offline secret-sharing helper with two modes:
+
+- `Classic Q&A`: define questions, answers, and a threshold; the secret unlocks only when enough answers are correct.
+- `Group Recovery`: split one secret into `N` shard links/JSON payloads, then recover it after collecting at least `K` shards.
 
 Think of it as a shareable offline challenge format, not as a full-strength secret-sharing system.
 
@@ -32,6 +34,14 @@ python3 -m http.server 8000
 1. Create a challenge: set a secret, questions/answers, and threshold.
 2. Share a challenge: copy a compact self-contained link or export JSON.
 3. Solve a challenge: import link/JSON, answer questions, and unlock.
+
+### Group recovery mode
+
+1. Switch to `Group Recovery`.
+2. Enter the secret, total shard count `N`, and threshold `K`.
+3. Generate shard links and send each shard to a different person or storage location.
+4. On the recovery side, open any shard link or import shard JSON, then paste additional shards until at least `K` are present.
+5. Recover the secret locally in the browser.
 
 ### Multiple acceptable answers (per question)
 

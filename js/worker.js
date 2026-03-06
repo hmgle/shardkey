@@ -17,6 +17,7 @@ function t(key, params) {
 var LIMITS = {
     maxQuestions: 64,
     maxThreshold: 64,
+    maxShardCount: 20,
     maxSecretBytes: 1024,
     maxTitleChars: 120,
     maxDescChars: 800,
@@ -211,6 +212,34 @@ function bigIntToBytes(n, byteLength) {
 function getSecretValueBase(byteLength) {
     if (byteLength <= 0) return 1n;
     return 1n << (8n * BigInt(byteLength));
+}
+
+function bytesToHex(bytes) {
+    var out = '';
+    for (var i = 0; i < bytes.length; i++) out += bytes[i].toString(16).padStart(2, '0');
+    return out;
+}
+
+async function hashToHex(data) {
+    return bytesToHex(await sha256Bytes(data));
+}
+
+async function checksumMatches(secretText, checksum) {
+    if (typeof checksum !== 'string') return false;
+    var secretBytes = new TextEncoder().encode(String(secretText || ''));
+    var actual = (await hashToHex(secretBytes)).toLowerCase();
+    return actual.substring(0, checksum.length) === checksum.toLowerCase();
+}
+
+function secretToBigInt(text) {
+    var bytes = new TextEncoder().encode(String(text || ''));
+    if (bytes.length === 0) return { value: 0n, byteLength: 0 };
+    return { value: bytesToBigInt(bytes), byteLength: bytes.length };
+}
+
+function bigIntToSecret(n, byteLength) {
+    if (byteLength === 0) return '';
+    return new TextDecoder().decode(bigIntToBytes(n, byteLength));
 }
 
 function bytesToBase64Url(bytes) {
@@ -439,6 +468,160 @@ function validateChallengeData(challenge) {
     return { version: version, secretEncoding: 'offset-payload-v3', title: title, description: description, threshold: threshold, secretByteLength: secretByteLength, secretPayloadByteLength: secretPayloadByteLength, kdf: kdf, questions: normalizedQuestions, createdAt: typeof challenge.createdAt === 'string' ? challenge.createdAt : '' };
 }
 
+function validateShardData(shard) {
+    if (!isPlainObject(shard)) throw new Error(t('errors.shard.invalid_format'));
+    var version = Number(shard.version);
+    if (!Number.isInteger(version) || version !== 3) throw new Error(t('errors.shard.only_v3'));
+    if (String(shard.type || '') !== 'shard') throw new Error(t('errors.shard.type_invalid'));
+
+    var challengeId = String(shard.challengeId || '').toLowerCase();
+    if (!/^[0-9a-f]{8,64}$/.test(challengeId)) throw new Error(t('errors.shard.challenge_id_invalid'));
+
+    var totalShards = Number(shard.totalShards);
+    if (!Number.isInteger(totalShards) || totalShards < 2 || totalShards > LIMITS.maxShardCount) throw new Error(t('errors.shard.total_invalid', { max: LIMITS.maxShardCount }));
+
+    var threshold = Number(shard.threshold);
+    if (!Number.isInteger(threshold) || threshold < 2 || threshold > totalShards) throw new Error(t('errors.shard.threshold_invalid'));
+
+    var shardIndex = Number(shard.shardIndex);
+    if (!Number.isInteger(shardIndex) || shardIndex < 0 || shardIndex >= totalShards) throw new Error(t('errors.shard.index_invalid'));
+
+    var secretByteLength = Number(shard.secretByteLength);
+    if (!Number.isInteger(secretByteLength) || secretByteLength <= 0 || secretByteLength > LIMITS.maxSecretBytes) throw new Error(t('errors.shard.secret_length_invalid'));
+
+    var secretChecksum = String(shard.secretChecksum || '').toLowerCase();
+    if (!/^[0-9a-f]{16,64}$/.test(secretChecksum)) throw new Error(t('errors.shard.checksum_invalid'));
+
+    if (String(shard.secretEncoding || '') !== 'offset-base256') throw new Error(t('errors.shard.encoding_invalid'));
+
+    var modulusStr = String(shard.modulus || '');
+    if (!/^\d+$/.test(modulusStr) || modulusStr.length > LIMITS.maxBigIntDigits) throw new Error(t('errors.shard.modulus_invalid'));
+    var modulusBigInt = BigInt(modulusStr);
+    if (modulusBigInt <= 2n) throw new Error(t('errors.shard.modulus_invalid'));
+
+    var remainderStr = String(shard.remainder || '');
+    if (!/^\d+$/.test(remainderStr) || remainderStr.length > LIMITS.maxBigIntDigits) throw new Error(t('errors.shard.remainder_invalid'));
+    var remainderBigInt = BigInt(remainderStr);
+    if (remainderBigInt < 0n || remainderBigInt >= modulusBigInt) throw new Error(t('errors.shard.remainder_invalid'));
+
+    return {
+        type: 'shard',
+        version: version,
+        challengeId: challengeId,
+        shardIndex: shardIndex,
+        totalShards: totalShards,
+        threshold: threshold,
+        secretByteLength: secretByteLength,
+        secretChecksum: secretChecksum,
+        secretEncoding: 'offset-base256',
+        modulus: modulusBigInt.toString(),
+        remainder: remainderBigInt.toString(),
+    };
+}
+
+function normalizeShardCollection(value) {
+    if (!Array.isArray(value) || value.length === 0) throw new Error(t('errors.shard.collection_empty'));
+    var normalized = value.map(validateShardData);
+    var first = normalized[0];
+    for (var i = 1; i < normalized.length; i++) {
+        var shard = normalized[i];
+        if (shard.challengeId !== first.challengeId || shard.threshold !== first.threshold || shard.totalShards !== first.totalShards || shard.secretByteLength !== first.secretByteLength || shard.secretChecksum !== first.secretChecksum || shard.secretEncoding !== first.secretEncoding) {
+            throw new Error(t('errors.shard.mixed_collection'));
+        }
+    }
+    return normalized;
+}
+
+async function generateShards(secret, totalShards, threshold, onProgress) {
+    if (!secret) throw new Error(t('errors.shard.secret_empty'));
+    if (totalShards < 2 || totalShards > LIMITS.maxShardCount) throw new Error(t('errors.shard.total_invalid', { max: LIMITS.maxShardCount }));
+    if (threshold < 2) throw new Error(t('errors.shard.threshold_invalid'));
+    if (threshold > totalShards) throw new Error(t('errors.shard.threshold_gt_total'));
+
+    var secretBytes = new TextEncoder().encode(secret);
+    if (secretBytes.length > LIMITS.maxSecretBytes) throw new Error(t('validation.secret.too_long', { max: LIMITS.maxSecretBytes }));
+
+    var rawResult = secretToBigInt(secret);
+    var rawSecretValue = rawResult.value;
+    var byteLength = rawResult.byteLength;
+    var secretBits = Math.max(1, byteLength * 8);
+    var modBits = calculateModulusBitSize(secretBits, threshold);
+    var moduli = null;
+    var encodedSecret = null;
+
+    for (var attempt = 0; attempt < 8; attempt++) {
+        var bitSizeForAttempt = modBits + attempt * 2;
+        if (onProgress) onProgress(t('progress.generating_moduli'), 0, totalShards);
+        moduli = await generateModuli(totalShards, bitSizeForAttempt, function (done, total) {
+            if (onProgress) onProgress(t('progress.generating_moduli'), done, total);
+        });
+        var bounds = calculateMignotteBounds(moduli, threshold);
+        if (bounds.alpha <= bounds.beta) {
+            await yieldToUI();
+            continue;
+        }
+        try {
+            encodedSecret = chooseEncodedSecret(rawSecretValue, byteLength, bounds.alpha, bounds.beta);
+            break;
+        } catch (e) {
+            if (attempt === 7) throw e;
+            await yieldToUI();
+        }
+    }
+
+    if (!moduli || encodedSecret === null) throw new Error(t('errors.shard.generate_failed'));
+
+    var checksum = (await hashToHex(secretBytes)).substring(0, 32);
+    var challengeId = (await hashToHex(new TextEncoder().encode(secret + '|' + Date.now() + '|' + Math.random()))).substring(0, 16);
+    var shards = [];
+    for (var i = 0; i < totalShards; i++) {
+        var modulus = moduli[i];
+        var remainder = ((encodedSecret % modulus) + modulus) % modulus;
+        shards.push({
+            type: 'shard',
+            version: 3,
+            challengeId: challengeId,
+            shardIndex: i,
+            totalShards: totalShards,
+            threshold: threshold,
+            secretByteLength: byteLength,
+            secretChecksum: checksum,
+            secretEncoding: 'offset-base256',
+            modulus: modulus.toString(),
+            remainder: remainder.toString(),
+        });
+    }
+    return shards;
+}
+
+async function recoverFromShards(shards) {
+    var normalized = normalizeShardCollection(shards);
+    var first = normalized[0];
+    if (normalized.length < first.threshold) throw new Error(t('errors.shard.need_more', { threshold: first.threshold, count: normalized.length }));
+
+    var seenIndices = new Set();
+    var moduli = [];
+    var remainders = [];
+    for (var i = 0; i < normalized.length; i++) {
+        var shard = normalized[i];
+        if (seenIndices.has(shard.shardIndex)) throw new Error(t('errors.shard.duplicate_index', { index: shard.shardIndex + 1 }));
+        seenIndices.add(shard.shardIndex);
+        var modulusBigInt = BigInt(shard.modulus);
+        for (var j = 0; j < moduli.length; j++) {
+            if (gcd(moduli[j], modulusBigInt) !== 1n) throw new Error(t('errors.shard.moduli_not_coprime'));
+        }
+        moduli.push(modulusBigInt);
+        remainders.push(BigInt(shard.remainder));
+    }
+
+    var recovered = solveCRT(remainders, moduli);
+    var base = getSecretValueBase(first.secretByteLength);
+    var decodedValue = ((recovered % base) + base) % base;
+    var secretText = bigIntToSecret(decodedValue, first.secretByteLength);
+    if (!(await checksumMatches(secretText, first.secretChecksum))) throw new Error(t('errors.shard.checksum_mismatch'));
+    return secretText;
+}
+
 async function findVerifiedQuestionRemainder(question, userAnswer, kdf, modulusBigInt) {
     var keyMaterial = await deriveAnswerKeyMaterialPBKDF2(userAnswer, question.saltBytes, kdf.iterations, kdf.dkLen);
     var keyMod = ((keyMaterial.keyBigInt % modulusBigInt) + modulusBigInt) % modulusBigInt;
@@ -503,6 +686,14 @@ self.onmessage = async function (event) {
         }
         if (data.type === 'recover') {
             postMessage({ type: 'result', result: await recoverSecret(data.payload.challenge, data.payload.answers || {}) });
+            return;
+        }
+        if (data.type === 'generate-shards') {
+            postMessage({ type: 'result', result: await generateShards(data.payload.secret, data.payload.totalShards, data.payload.threshold) });
+            return;
+        }
+        if (data.type === 'recover-shards') {
+            postMessage({ type: 'result', result: await recoverFromShards(data.payload.shards || []) });
             return;
         }
         throw new Error('Unknown worker task');

@@ -138,6 +138,64 @@ header p {
     border-radius: 3px 3px 0 0;
 }
 
+.mode-switch-card {
+    padding-bottom: 18px;
+}
+
+.mode-switch {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.mode-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    width: 100%;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.mode-option:hover {
+    border-color: var(--primary);
+    box-shadow: var(--shadow);
+    transform: translateY(-1px);
+}
+
+.mode-option.active {
+    border-color: var(--primary);
+    background: rgba(37, 99, 235, 0.06);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
+}
+
+.mode-icon {
+    font-size: 1.45em;
+    line-height: 1;
+}
+
+.mode-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.mode-name {
+    font-size: 1em;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.mode-desc {
+    font-size: 0.84em;
+    color: var(--text-secondary);
+}
+
 /* 面板 */
 .panel {
     display: none;
@@ -451,6 +509,48 @@ textarea {
     min-height: 60px;
 }
 
+.shard-link-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.shard-link-item {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(37, 99, 235, 0.03);
+}
+
+.shard-link-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.shard-label {
+    min-width: 64px;
+    font-size: 0.84em;
+    font-weight: 600;
+    color: var(--primary);
+}
+
+.shard-url-output {
+    flex: 1;
+    min-width: 0;
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+    font-size: 0.8em;
+    background: var(--bg);
+}
+
+.shard-share-link {
+    min-height: 72px;
+}
+
 /* 求解页面 */
 .solve-load-desc {
     color: var(--text-secondary);
@@ -519,6 +619,52 @@ textarea {
     margin-bottom: 6px;
 }
 
+.shard-merge-topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.shard-merge-meta {
+    font-size: 0.84em;
+    color: var(--text-secondary);
+}
+
+.shard-merge-input {
+    margin-bottom: 12px;
+}
+
+.shard-merge-input label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+}
+
+.shard-merge-input textarea {
+    min-height: 72px;
+    font-size: 0.85em;
+}
+
+.input-note {
+    font-size: 0.78em;
+    color: var(--text-secondary);
+    font-weight: 400;
+}
+
+.shard-merge-intro {
+    margin-top: 8px;
+    font-size: 0.84em;
+    color: var(--text-secondary);
+}
+
+.shard-success-glow {
+    background: linear-gradient(135deg, #f0fdf4, #ecfeff);
+    border: 1px solid #a7f3d0;
+}
+
 /* 加载文件按钮 */
 .file-input-wrapper {
     position: relative;
@@ -580,8 +726,19 @@ footer a:hover {
         flex-direction: column;
     }
 
+    .mode-switch {
+        grid-template-columns: 1fr;
+    }
+
     .tab-btn {
         padding: 12px 10px;
         font-size: 0.9em;
+    }
+
+    .shard-link-item,
+    .shard-merge-topbar,
+    .shard-link-head {
+        flex-direction: column;
+        align-items: stretch;
     }
 }

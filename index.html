@@ -30,107 +30,200 @@
             <button class="tab-btn" data-tab="solve" data-i18n="tabs.solve">求解挑战</button>
         </div>
 
+        <div class="card mode-switch-card">
+            <h2 data-i18n="mode.title">选择模式</h2>
+            <div class="mode-switch" id="app-mode-switch">
+                <button class="mode-option active" data-mode="classic" type="button">
+                    <span class="mode-icon" aria-hidden="true">🔑</span>
+                    <span class="mode-copy">
+                        <span class="mode-name" data-i18n="mode.classic.name">经典问答</span>
+                        <span class="mode-desc" data-i18n="mode.classic.desc">设置问题，答对足够多即可解锁秘密。</span>
+                    </span>
+                </button>
+                <button class="mode-option" data-mode="shard" type="button">
+                    <span class="mode-icon" aria-hidden="true">🧩</span>
+                    <span class="mode-copy">
+                        <span class="mode-name" data-i18n="mode.shard.name">多人合力恢复</span>
+                        <span class="mode-desc" data-i18n="mode.shard.desc">把秘密拆成多个分片，集齐足够分片后恢复。</span>
+                    </span>
+                </button>
+            </div>
+        </div>
+
         <!-- ==================== 创建面板 ==================== -->
         <div id="panel-create" class="panel active">
-            <!-- 秘密输入 -->
-            <div class="card">
-                <h2 data-i18n="create.secret.title">设置秘密</h2>
-                <div class="form-group">
-                    <label for="secret-input" data-i18n="create.secret.label">要分享的秘密</label>
-                    <textarea id="secret-input" data-i18n-placeholder="create.secret.placeholder" placeholder="输入你的秘密，例如手机号、密码、一段话..."></textarea>
-                    <div class="form-hint" data-i18n="create.secret.hint">支持中文、英文、数字和符号。秘密将被加密，只有正确回答足够多的问题才能恢复。</div>
+            <div id="create-classic-content">
+                <!-- 秘密输入 -->
+                <div class="card">
+                    <h2 data-i18n="create.secret.title">设置秘密</h2>
+                    <div class="form-group">
+                        <label for="secret-input" data-i18n="create.secret.label">要分享的秘密</label>
+                        <textarea id="secret-input" data-i18n-placeholder="create.secret.placeholder" placeholder="输入你的秘密，例如手机号、密码、一段话..."></textarea>
+                        <div class="form-hint" data-i18n="create.secret.hint">支持中文、英文、数字和符号。秘密将被加密，只有正确回答足够多的问题才能恢复。</div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="challenge-title" data-i18n="create.title.label">挑战标题（可选）</label>
+                            <input type="text" id="challenge-title" data-i18n-placeholder="create.title.placeholder" placeholder="例如：获取我的手机号">
+                        </div>
+                        <div class="form-group">
+                            <label for="challenge-desc" data-i18n="create.desc.label">挑战描述（可选）</label>
+                            <input type="text" id="challenge-desc" data-i18n-placeholder="create.desc.placeholder" placeholder="例如：回答问题获取秘密">
+                        </div>
+                    </div>
                 </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="challenge-title" data-i18n="create.title.label">挑战标题（可选）</label>
-                        <input type="text" id="challenge-title" data-i18n-placeholder="create.title.placeholder" placeholder="例如：获取我的手机号">
+
+                <!-- 问题列表 -->
+                <div class="card">
+                    <h2 data-i18n="create.questions.title">设置问题</h2>
+                    <div id="question-list">
+                        <!-- 动态生成 -->
                     </div>
-                    <div class="form-group">
-                        <label for="challenge-desc" data-i18n="create.desc.label">挑战描述（可选）</label>
-                        <input type="text" id="challenge-desc" data-i18n-placeholder="create.desc.placeholder" placeholder="例如：回答问题获取秘密">
+                    <button class="btn btn-secondary" id="btn-add-question" data-i18n="create.questions.add">+ 添加问题</button>
+                </div>
+
+                <!-- 门限设置 -->
+                <div class="card">
+                    <h2 data-i18n="create.threshold.title">门限设置</h2>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="threshold-input" data-i18n="create.threshold.label">门限值</label>
+                            <input type="number" id="threshold-input" min="2" max="64" value="3">
+                            <div class="form-hint" data-i18n="create.threshold.hint">需要正确回答的最少问题数。值越大越安全，但也要求回答者知道更多答案。</div>
+                        </div>
+                        <div class="form-group">
+                            <label data-i18n="create.question_count.label">问题总数</label>
+                            <input type="text" id="question-count-display" disabled value="0">
+                        </div>
                     </div>
+                </div>
+
+                <!-- 生成按钮 -->
+                <div class="card">
+                    <button class="btn btn-primary btn-block" id="btn-generate" data-i18n="create.generate">生成挑战</button>
+                    <div id="generate-progress" class="hidden">
+                        <div class="progress-bar"><div class="fill" id="progress-fill"></div></div>
+                        <div class="progress-text" id="progress-text"></div>
+                    </div>
+                    <div id="generate-result" class="hidden"></div>
                 </div>
             </div>
 
-            <!-- 问题列表 -->
-            <div class="card">
-                <h2 data-i18n="create.questions.title">设置问题</h2>
-                <div id="question-list">
-                    <!-- 动态生成 -->
-                </div>
-                <button class="btn btn-secondary" id="btn-add-question" data-i18n="create.questions.add">+ 添加问题</button>
-            </div>
-
-            <!-- 门限设置 -->
-            <div class="card">
-                <h2 data-i18n="create.threshold.title">门限设置</h2>
-                <div class="form-row">
+            <div id="create-shard-content" class="hidden">
+                <div class="card">
+                    <h2 data-i18n="create.shard.secret_title">拆分秘密</h2>
                     <div class="form-group">
-                        <label for="threshold-input" data-i18n="create.threshold.label">门限值</label>
-                        <input type="number" id="threshold-input" min="2" max="64" value="3">
-                        <div class="form-hint" data-i18n="create.threshold.hint">需要正确回答的最少问题数。值越大越安全，但也要求回答者知道更多答案。</div>
+                        <label for="shard-secret-input" data-i18n="create.shard.secret_label">要拆分的秘密</label>
+                        <textarea id="shard-secret-input" data-i18n-placeholder="create.shard.secret_placeholder" placeholder="输入想让大家一起恢复的秘密..."></textarea>
+                        <div class="form-hint" data-i18n="create.shard.secret_hint">系统会把秘密拆成多个独立分片，集齐足够多分片才能恢复。</div>
                     </div>
-                    <div class="form-group">
-                        <label data-i18n="create.question_count.label">问题总数</label>
-                        <input type="text" id="question-count-display" disabled value="0">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="shard-total" data-i18n="create.shard.total_label">总分片数 N</label>
+                            <input type="number" id="shard-total" min="2" max="20" value="5">
+                            <div class="form-hint" data-i18n="create.shard.total_hint">准备分给多少个人或多少个保存位置。</div>
+                        </div>
+                        <div class="form-group">
+                            <label for="shard-threshold" data-i18n="create.shard.threshold_label">恢复门限 K</label>
+                            <input type="number" id="shard-threshold" min="2" max="20" value="3">
+                            <div class="form-hint" data-i18n="create.shard.threshold_hint">至少需要多少个分片同时到场才能恢复秘密。</div>
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            <!-- 生成按钮 -->
-            <div class="card">
-                <button class="btn btn-primary btn-block" id="btn-generate" data-i18n="create.generate">生成挑战</button>
-                <div id="generate-progress" class="hidden">
-                    <div class="progress-bar"><div class="fill" id="progress-fill"></div></div>
-                    <div class="progress-text" id="progress-text"></div>
+                <div class="card shard-create-card">
+                    <button class="btn btn-primary btn-block" id="btn-generate-shards" data-i18n="create.shard.generate">生成分片</button>
+                    <div id="shard-generate-progress" class="hidden">
+                        <div class="progress-bar"><div class="fill" id="shard-progress-fill"></div></div>
+                        <div class="progress-text" id="shard-progress-text"></div>
+                    </div>
+                    <div id="shard-generate-result" class="hidden"></div>
                 </div>
-                <div id="generate-result" class="hidden"></div>
             </div>
         </div>
 
         <!-- ==================== 求解面板 ==================== -->
         <div id="panel-solve" class="panel">
-            <!-- 加载挑战 -->
-            <div class="card" id="solve-load-card">
-                <h2 data-i18n="solve.load.title">加载挑战</h2>
-                <p class="solve-load-desc">
-                    <span data-i18n="solve.load.desc">通过链接自动加载，或手动导入挑战文件。</span>
-                </p>
-                <div class="form-hint solve-load-note" data-i18n="solve.load.note">本工具完全离线运行；弱答案仍可能被离线猜解。</div>
-                <div class="btn-group">
-                    <div class="file-input-wrapper">
-                        <button class="btn btn-secondary" data-i18n="solve.load.from_file">从文件导入</button>
-                        <input type="file" id="file-import" accept=".json">
+            <div id="solve-classic-mode">
+                <!-- 加载挑战 -->
+                <div class="card" id="solve-load-card">
+                    <h2 data-i18n="solve.load.title">加载挑战</h2>
+                    <p class="solve-load-desc">
+                        <span data-i18n="solve.load.desc">通过链接自动加载，或手动导入挑战文件。</span>
+                    </p>
+                    <div class="form-hint solve-load-note" data-i18n="solve.load.note">本工具完全离线运行；弱答案仍可能被离线猜解。</div>
+                    <div class="btn-group">
+                        <div class="file-input-wrapper">
+                            <button class="btn btn-secondary" data-i18n="solve.load.from_file">从文件导入</button>
+                            <input type="file" id="file-import" accept=".json">
+                        </div>
+                        <button class="btn btn-secondary" id="btn-paste-link" data-i18n="solve.load.paste_link">粘贴链接</button>
                     </div>
-                    <button class="btn btn-secondary" id="btn-paste-link" data-i18n="solve.load.paste_link">粘贴链接</button>
+                    <div id="solve-load-error" class="hidden"></div>
+                    <div id="paste-link-area" class="hidden paste-link-area">
+                        <textarea id="paste-link-input" data-i18n-placeholder="solve.load.link_placeholder" placeholder="粘贴包含挑战数据的链接..." class="paste-link-input"></textarea>
+                        <button class="btn btn-primary paste-link-submit" id="btn-load-link" data-i18n="solve.load.load">加载</button>
+                    </div>
                 </div>
-                <div id="solve-load-error" class="hidden"></div>
-                <div id="paste-link-area" class="hidden paste-link-area">
-                    <textarea id="paste-link-input" data-i18n-placeholder="solve.load.link_placeholder" placeholder="粘贴包含挑战数据的链接..." class="paste-link-input"></textarea>
-                    <button class="btn btn-primary paste-link-submit" id="btn-load-link" data-i18n="solve.load.load">加载</button>
+
+                <!-- 挑战信息和问题（加载后显示） -->
+                <div id="solve-content" class="hidden">
+                    <div class="card">
+                        <div class="challenge-info">
+                            <div class="info-title" id="solve-title"></div>
+                            <div class="info-desc" id="solve-desc"></div>
+                            <div class="info-meta" id="solve-meta"></div>
+                            <div class="solve-toolbar">
+                                <button class="btn btn-secondary" id="btn-change-challenge" data-i18n="solve.change">更换挑战</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <h2 data-i18n="solve.questions.title">回答问题</h2>
+                        <div id="solve-questions">
+                            <!-- 动态生成 -->
+                        </div>
+                        <button class="btn btn-success btn-block" id="btn-solve" data-i18n="solve.unlock">解锁秘密</button>
+                        <div id="solve-result" class="hidden"></div>
+                    </div>
                 </div>
             </div>
 
-            <!-- 挑战信息和问题（加载后显示） -->
-            <div id="solve-content" class="hidden">
-                <div class="card">
-                    <div class="challenge-info">
-                        <div class="info-title" id="solve-title"></div>
-                        <div class="info-desc" id="solve-desc"></div>
-                        <div class="info-meta" id="solve-meta"></div>
-                        <div class="solve-toolbar">
-                            <button class="btn btn-secondary" id="btn-change-challenge" data-i18n="solve.change">更换挑战</button>
+            <div id="solve-shard-mode" class="hidden">
+                <div class="card" id="solve-shard-load-card">
+                    <h2 data-i18n="solve.shard.load.title">加载分片</h2>
+                    <p class="solve-load-desc" data-i18n="solve.shard.load.desc">导入任意一个分片链接/JSON，或直接导入一组分片文件。</p>
+                    <div class="form-hint solve-load-note" data-i18n="solve.shard.load.note">集齐足够分片后，就能像集齐龙珠一样把秘密恢复出来。</div>
+                    <div class="btn-group">
+                        <div class="file-input-wrapper">
+                            <button class="btn btn-secondary" data-i18n="solve.shard.load.from_file">从分片文件导入</button>
+                            <input type="file" id="shard-file-import" accept=".json">
                         </div>
+                        <button class="btn btn-secondary" id="btn-paste-shard" data-i18n="solve.shard.load.paste">粘贴分片链接或 JSON</button>
+                    </div>
+                    <div id="solve-shard-load-error" class="hidden"></div>
+                    <div id="paste-shard-area" class="hidden paste-link-area">
+                        <textarea id="paste-shard-input" data-i18n-placeholder="solve.shard.load.placeholder" placeholder="粘贴单个分片链接、单个分片 JSON，或分片数组 JSON..." class="paste-link-input"></textarea>
+                        <button class="btn btn-primary paste-link-submit" id="btn-load-shard" data-i18n="solve.shard.load.submit">加载分片</button>
                     </div>
                 </div>
 
-                <div class="card">
-                    <h2 data-i18n="solve.questions.title">回答问题</h2>
-                    <div id="solve-questions">
-                        <!-- 动态生成 -->
+                <div id="shard-merge-card" class="card hidden">
+                    <div class="shard-merge-topbar">
+                        <div>
+                            <h2 data-i18n="solve.shard.merge.title">合力恢复秘密</h2>
+                            <div class="shard-merge-meta" id="shard-merge-meta"></div>
+                        </div>
+                        <button class="btn btn-secondary" id="btn-change-shard-set" data-i18n="solve.shard.change">更换分片</button>
                     </div>
-                    <button class="btn btn-success btn-block" id="btn-solve" data-i18n="solve.unlock">解锁秘密</button>
-                    <div id="solve-result" class="hidden"></div>
+                    <div class="form-hint" id="shard-merge-hint" data-i18n="solve.shard.merge.hint">把你收集到的分片分别粘贴进下方输入框。</div>
+                    <div id="shard-merge-inputs"></div>
+                    <div class="btn-group">
+                        <button class="btn btn-secondary" id="btn-add-shard-input" data-i18n="solve.shard.merge.add_input">+ 添加分片输入框</button>
+                        <button class="btn btn-success" id="btn-merge-shards" data-i18n="solve.shard.merge.submit">恢复秘密</button>
+                    </div>
+                    <div id="shard-merge-result" class="hidden"></div>
                 </div>
             </div>
         </div>
