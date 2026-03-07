@@ -506,15 +506,51 @@ var btnAddShardInput = document.getElementById('btn-add-shard-input');
 var btnMergeShards = document.getElementById('btn-merge-shards');
 var btnChangeShardSet = document.getElementById('btn-change-shard-set');
 var shardMergeResult = document.getElementById('shard-merge-result');
+var langSwitcher = document.getElementById('lang-switcher');
+var langTrigger = document.getElementById('lang-trigger');
+var langMenu = document.getElementById('lang-menu');
+var langOptions = langSwitcher ? langSwitcher.querySelectorAll('.lang-option') : [];
+var lastGeneratedState = null;
+var lastGeneratedShardState = null;
+var currentChallengeSource = '';
+var currentShardSource = '';
+var lastSolveOutcome = null;
+var lastShardMergeOutcome = null;
 
 function switchTab(tabName) {
-    tabBtns.forEach(function (btn) { btn.classList.toggle('active', btn.dataset.tab === tabName); });
-    panelCreate.classList.toggle('active', tabName === 'create');
-    panelSolve.classList.toggle('active', tabName === 'solve');
+    tabBtns.forEach(function (btn) {
+        var isActive = btn.dataset.tab === tabName;
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        btn.setAttribute('tabindex', isActive ? '0' : '-1');
+    });
+    if (panelCreate) {
+        var isCreate = tabName === 'create';
+        panelCreate.classList.toggle('active', isCreate);
+        panelCreate.hidden = !isCreate;
+    }
+    if (panelSolve) {
+        var isSolve = tabName === 'solve';
+        panelSolve.classList.toggle('active', isSolve);
+        panelSolve.hidden = !isSolve;
+    }
 }
 
 tabBtns.forEach(function (btn) {
     btn.addEventListener('click', function () { switchTab(btn.dataset.tab); });
+    btn.addEventListener('keydown', function (event) {
+        var currentIndex = Array.prototype.indexOf.call(tabBtns, btn);
+        var nextIndex = currentIndex;
+        if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % tabBtns.length;
+        if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + tabBtns.length) % tabBtns.length;
+        if (event.key === 'Home') nextIndex = 0;
+        if (event.key === 'End') nextIndex = tabBtns.length - 1;
+        if (nextIndex !== currentIndex) {
+            event.preventDefault();
+            tabBtns[nextIndex].focus();
+            switchTab(tabBtns[nextIndex].dataset.tab);
+        }
+    });
 });
 
 modeOptions.forEach(function (option) {
@@ -528,15 +564,6 @@ function escapeHtml(text) {
     div.textContent = text;
     return div.innerHTML.replace(/"/g, '&quot;');
 }
-
-var langSwitcher = document.getElementById('lang-switcher');
-var langOptions = langSwitcher ? langSwitcher.querySelectorAll('.lang-option') : [];
-var lastGeneratedState = null;
-var lastGeneratedShardState = null;
-var currentChallengeSource = '';
-var currentShardSource = '';
-var lastSolveOutcome = null;
-var lastShardMergeOutcome = null;
 
 function applyStaticI18n() {
     document.querySelectorAll('[data-i18n]').forEach(function (el) {
@@ -555,8 +582,18 @@ function syncLangSelect() {
     if (!langSwitcher) return;
     var current = (i18n && typeof i18n.getLang === 'function') ? i18n.getLang() : '';
     langOptions.forEach(function (btn) {
-        btn.classList.toggle('active', btn.dataset.lang === current);
+        var isActive = btn.dataset.lang === current;
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-checked', isActive ? 'true' : 'false');
     });
+}
+
+function setLangMenuOpen(open) {
+    if (!langSwitcher) return;
+    langSwitcher.classList.toggle('open', !!open);
+    if (langTrigger) {
+        langTrigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
 }
 
 function setAppMode(mode) {
@@ -566,7 +603,9 @@ function setAppMode(mode) {
     currentAppMode = mode;
 
     modeOptions.forEach(function (option) {
-        option.classList.toggle('active', option.dataset.mode === mode);
+        var isActive = option.dataset.mode === mode;
+        option.classList.toggle('active', isActive);
+        option.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     });
 
     if (createClassicContent) {
@@ -655,13 +694,30 @@ function checkRuntimeSupport() {
 
 function initI18nUI() {
     syncLangSelect();
+    if (langTrigger) {
+        langTrigger.addEventListener('click', function (event) {
+            event.preventDefault();
+            setLangMenuOpen(!langSwitcher.classList.contains('open'));
+        });
+    }
     if (langOptions.length && i18n && typeof i18n.setLang === 'function') {
         langOptions.forEach(function (btn) {
             btn.addEventListener('click', function () {
                 i18n.setLang(btn.dataset.lang);
+                setLangMenuOpen(false);
+                if (langTrigger) langTrigger.focus();
             });
         });
     }
+    document.addEventListener('click', function (event) {
+        if (!langSwitcher || langSwitcher.contains(event.target)) return;
+        setLangMenuOpen(false);
+    });
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') {
+            setLangMenuOpen(false);
+        }
+    });
     if (i18n && typeof i18n.onChange === 'function') {
         i18n.onChange(function () {
             syncLangSelect();

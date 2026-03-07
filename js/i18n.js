@@ -182,7 +182,7 @@
             'create.shard.result.item_label': '分片 {n}',
 
             'solve.shard.load.title': '加载分片',
-            'solve.shard.load.desc': '导入任意一个分片链接/JSON，或直接导入一组分片文件。',
+            'solve.shard.load.desc': '导入任意一个分片链接/JSON，或导入包含整组分片的 JSON 文件。',
             'solve.shard.load.note': '集齐足够分片后，就能像集齐龙珠一样把秘密恢复出来。',
             'solve.shard.load.from_file': '从分片文件导入',
             'solve.shard.load.paste': '粘贴分片链接或 JSON',
@@ -416,7 +416,7 @@
             'create.shard.result.item_label': 'Shard {n}',
 
             'solve.shard.load.title': 'Load Shards',
-            'solve.shard.load.desc': 'Import any shard link/JSON, or load a whole shard file directly.',
+            'solve.shard.load.desc': 'Import any shard link/JSON, or load a JSON file that contains a whole shard set.',
             'solve.shard.load.note': 'Gather enough shards and restore the secret like collecting dragon balls.',
             'solve.shard.load.from_file': 'Import shard file',
             'solve.shard.load.paste': 'Paste shard link or JSON',
@@ -650,7 +650,7 @@
             'create.shard.result.item_label': '分片 {n}',
 
             'solve.shard.load.title': '分片を読み込む',
-            'solve.shard.load.desc': '任意の分片リンク/JSON を読み込むか、分片ファイル一式を直接インポートします。',
+            'solve.shard.load.desc': '任意の分片リンク/JSON を読み込むか、分片一式を含む JSON ファイルをインポートします。',
             'solve.shard.load.note': '十分な分片を集めれば、ドラゴンボールのように秘密を呼び戻せます。',
             'solve.shard.load.from_file': '分片ファイルをインポート',
             'solve.shard.load.paste': '分片リンクまたは JSON を貼り付け',
@@ -884,7 +884,7 @@
             'create.shard.result.item_label': '分片 {n}',
 
             'solve.shard.load.title': '載入分片',
-            'solve.shard.load.desc': '匯入任意一個分片連結/JSON，或直接匯入整組分片檔案。',
+            'solve.shard.load.desc': '匯入任意一個分片連結/JSON，或匯入包含整組分片的 JSON 檔案。',
             'solve.shard.load.note': '集齊足夠分片後，就能像集齊龍珠一樣把秘密恢復出來。',
             'solve.shard.load.from_file': '從分片檔案匯入',
             'solve.shard.load.paste': '貼上分片連結或 JSON',
@@ -1021,6 +1021,7 @@
     }
 
     var listeners = [];
+    var messageCache = Object.create(null);
     var initialFromQuery = getLangFromQuery();
     var currentLang = getInitialLang();
     if (initialFromQuery && initialFromQuery === currentLang) {
@@ -1044,6 +1045,9 @@
 
     function getMessages(lang) {
         var norm = normalizeLang(lang || currentLang);
+        if (messageCache[norm]) {
+            return messageCache[norm];
+        }
         var fallback = translations['zh-CN'] || {};
         var dict = translations[norm] || fallback;
         var merged = {};
@@ -1053,6 +1057,7 @@
         Object.keys(dict).forEach(function (key) {
             merged[key] = dict[key];
         });
+        messageCache[norm] = merged;
         return merged;
     }
 

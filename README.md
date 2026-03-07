@@ -29,6 +29,11 @@ python3 -m http.server 8000
 - Use the top-right language selector to switch UI language (English / 日本語 / 简体中文 / 繁體中文).
 - You can also force the UI language via `?lang=` (supported: `en`, `ja`, `zh-CN`, `zh-TW`). The preference is saved in `localStorage`.
 
+## Validation
+
+- Syntax check: `node --check js/core.js && node --check js/app.js && node --check js/i18n.js && node --check js/worker.js`
+- Smoke test: `node scripts/smoke.mjs`
+
 ## Core Features
 
 1. Create a challenge: set a secret, questions/answers, and threshold.
@@ -72,7 +77,8 @@ Answer text can contain any characters (including `|`). The app no longer uses s
 
 - Weak/guessable answers are vulnerable to offline dictionary attacks. PBKDF2 hardening slows guessing down, but does not prevent it; the default cost is 120,000 PBKDF2-SHA-256 iterations per answer.
 - Allowing multiple valid answers per question reduces the difficulty of “guessing any acceptable variant”; keep variants minimal and non-obvious.
-- For robustness, the app enforces practical size limits (currently: secret ≤ 1024 bytes, questions ≤ 64, threshold ≤ 64). Larger challenges should be split up.
+- For robustness, the app enforces practical limits (currently: secret ≤ 1024 bytes, questions ≤ 64, threshold ≤ 64, shard count ≤ 20, answer variants per question ≤ 16).
+- Large challenges may exceed practical URL/hash limits; when that happens, share or import JSON instead of a link.
 - Use a high-entropy secret if you need real confidentiality (e.g. append a random suffix), and prefer higher thresholds.
 - `Classic Q&A` still depends on answer strength. A weak answer can let an attacker recover one encrypted share offline.
 - If you need strong cryptographic protection, use an audited secret-sharing system or a password manager instead of relying on challenge questions alone.

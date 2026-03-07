@@ -137,6 +137,17 @@ header p {
     box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.10);
 }
 
+.mode-toggle-btn:focus-visible,
+.lang-trigger:focus-visible,
+.lang-option:focus-visible,
+.tab-btn:focus-visible,
+.btn:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
 .lang-icon-zh {
     font-weight: 700;
     font-size: 1em;
@@ -168,6 +179,7 @@ header p {
 }
 
 .lang-switcher:hover .lang-menu,
+.lang-switcher:focus-within .lang-menu,
 .lang-switcher.open .lang-menu {
     opacity: 1;
     visibility: visible;

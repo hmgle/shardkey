@@ -19,8 +19,6 @@ var DEFAULTS = {
     aesGcmIvBytes: 12,
 };
 
-var MAX_SHARE_COMBINATION_ATTEMPTS = 1024;
-
 function resolveDefaults(options) {
     return Object.assign({}, DEFAULTS, options && options.limits ? options.limits : null);
 }
@@ -200,11 +198,17 @@ function nextCombination(indices, total) {
 }
 
 async function decryptSecretFromShares(shares, threshold, secretBox, aadLabel, options) {
+    if (!Array.isArray(shares) || shares.length < threshold) {
+        fail(options, 'errors.shamir.need_more_shares');
+    }
+    if (shares.length === threshold || (options && options.assumeAllSharesValid)) {
+        var directSecretKey = combineSecretShares(shares.slice(0, threshold), options);
+        return await aesGcmDecrypt(directSecretKey, secretBox, aadLabel, options);
+    }
     var indices = [];
     for (var i = 0; i < threshold; i++) {
         indices.push(i);
     }
-    var attempts = 0;
     do {
         var selectedShares = [];
         for (var j = 0; j < indices.length; j++) {
@@ -218,12 +222,7 @@ async function decryptSecretFromShares(shares, threshold, secretBox, aadLabel, o
                 throw e;
             }
         }
-        attempts += 1;
-    } while (
-        shares.length > threshold &&
-        attempts < MAX_SHARE_COMBINATION_ATTEMPTS &&
-        nextCombination(indices, shares.length)
-    );
+    } while (shares.length > threshold && nextCombination(indices, shares.length));
     throw new Error('Secret recovery failed');
 }
 
@@ -757,7 +756,13 @@ async function recoverSecret(challenge, answers, options) {
         };
     }
     try {
-        var secretBytes = await decryptSecretFromShares(shares, normalized.threshold, normalized.secretBox, makeSecretBoxAad(), options);
+        var secretBytes = await decryptSecretFromShares(
+            shares,
+            normalized.threshold,
+            normalized.secretBox,
+            makeSecretBoxAad(),
+            Object.assign({}, options || {}, { assumeAllSharesValid: true })
+        );
         return {
             success: true,
             secret: new TextDecoder().decode(secretBytes),

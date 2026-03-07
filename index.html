@@ -9,25 +9,25 @@
 <body>
     <div class="top-bar">
         <div class="top-bar-inner">
-            <div class="mode-toggle" id="app-mode-switch">
-                <button class="mode-toggle-btn active" data-mode="classic" type="button">
+            <div class="mode-toggle" id="app-mode-switch" role="group" aria-label="App mode">
+                <button class="mode-toggle-btn active" data-mode="classic" type="button" aria-pressed="true">
                     <span aria-hidden="true">🔑</span>
                     <span data-i18n="mode.classic.name">经典问答</span>
                 </button>
-                <button class="mode-toggle-btn" data-mode="shard" type="button">
+                <button class="mode-toggle-btn" data-mode="shard" type="button" aria-pressed="false">
                     <span aria-hidden="true">🧩</span>
                     <span data-i18n="mode.shard.name">多人合力恢复</span>
                 </button>
             </div>
             <div class="lang-switcher" id="lang-switcher">
-                <button class="lang-trigger" type="button" aria-label="Language">
+                <button class="lang-trigger" id="lang-trigger" type="button" aria-label="Language" aria-haspopup="true" aria-expanded="false" aria-controls="lang-menu">
                     <span class="lang-icon-zh">文</span><span class="lang-icon-en">A</span>
                 </button>
-                <div class="lang-menu">
-                    <button class="lang-option" type="button" data-lang="en">English</button>
-                    <button class="lang-option" type="button" data-lang="ja">日本語</button>
-                    <button class="lang-option" type="button" data-lang="zh-CN">简体中文</button>
-                    <button class="lang-option" type="button" data-lang="zh-TW">繁體中文</button>
+                <div class="lang-menu" id="lang-menu" role="menu" aria-labelledby="lang-trigger">
+                    <button class="lang-option" type="button" role="menuitemradio" aria-checked="false" data-lang="en">English</button>
+                    <button class="lang-option" type="button" role="menuitemradio" aria-checked="false" data-lang="ja">日本語</button>
+                    <button class="lang-option" type="button" role="menuitemradio" aria-checked="false" data-lang="zh-CN">简体中文</button>
+                    <button class="lang-option" type="button" role="menuitemradio" aria-checked="false" data-lang="zh-TW">繁體中文</button>
                 </div>
             </div>
         </div>
@@ -39,16 +39,16 @@
             <p data-i18n="app.tagline">通过回答问题离线解锁秘密的工具</p>
         </header>
 
-        <div id="runtime-warning" class="hidden"></div>
+        <div id="runtime-warning" class="hidden" aria-live="polite"></div>
 
         <!-- 标签切换 -->
-        <div class="tabs">
-            <button class="tab-btn active" data-tab="create" data-i18n="tabs.create">创建挑战</button>
-            <button class="tab-btn" data-tab="solve" data-i18n="tabs.solve">求解挑战</button>
+        <div class="tabs" role="tablist" aria-label="Primary sections">
+            <button class="tab-btn active" id="tab-create" type="button" role="tab" aria-selected="true" aria-controls="panel-create" tabindex="0" data-tab="create" data-i18n="tabs.create">创建挑战</button>
+            <button class="tab-btn" id="tab-solve" type="button" role="tab" aria-selected="false" aria-controls="panel-solve" tabindex="-1" data-tab="solve" data-i18n="tabs.solve">求解挑战</button>
         </div>
 
         <!-- ==================== 创建面板 ==================== -->
-        <div id="panel-create" class="panel active">
+        <div id="panel-create" class="panel active" role="tabpanel" aria-labelledby="tab-create">
             <div id="create-classic-content">
                 <!-- 秘密输入 -->
                 <div class="card">
@@ -102,7 +102,7 @@
                         <div class="progress-bar"><div class="fill" id="progress-fill"></div></div>
                         <div class="progress-text" id="progress-text"></div>
                     </div>
-                    <div id="generate-result" class="hidden"></div>
+                    <div id="generate-result" class="hidden" aria-live="polite"></div>
                 </div>
             </div>
 
@@ -134,13 +134,13 @@
                         <div class="progress-bar"><div class="fill" id="shard-progress-fill"></div></div>
                         <div class="progress-text" id="shard-progress-text"></div>
                     </div>
-                    <div id="shard-generate-result" class="hidden"></div>
+                    <div id="shard-generate-result" class="hidden" aria-live="polite"></div>
                 </div>
             </div>
         </div>
 
         <!-- ==================== 求解面板 ==================== -->
-        <div id="panel-solve" class="panel">
+        <div id="panel-solve" class="panel" role="tabpanel" aria-labelledby="tab-solve" hidden>
             <div id="solve-classic-mode">
                 <!-- 加载挑战 -->
                 <div class="card" id="solve-load-card">
@@ -156,7 +156,7 @@
                         </div>
                         <button class="btn btn-secondary" id="btn-paste-link" data-i18n="solve.load.paste_link">粘贴链接</button>
                     </div>
-                    <div id="solve-load-error" class="hidden"></div>
+                    <div id="solve-load-error" class="hidden" aria-live="polite"></div>
                     <div id="paste-link-area" class="hidden paste-link-area">
                         <textarea id="paste-link-input" data-i18n-placeholder="solve.load.link_placeholder" placeholder="粘贴包含挑战数据的链接..." class="paste-link-input"></textarea>
                         <button class="btn btn-primary paste-link-submit" id="btn-load-link" data-i18n="solve.load.load">加载</button>
@@ -182,7 +182,7 @@
                             <!-- 动态生成 -->
                         </div>
                         <button class="btn btn-success btn-block" id="btn-solve" data-i18n="solve.unlock">解锁秘密</button>
-                        <div id="solve-result" class="hidden"></div>
+                        <div id="solve-result" class="hidden" aria-live="polite"></div>
                     </div>
                 </div>
             </div>
@@ -190,7 +190,7 @@
             <div id="solve-shard-mode" class="hidden">
                 <div class="card" id="solve-shard-load-card">
                     <h2 data-i18n="solve.shard.load.title">加载分片</h2>
-                    <p class="solve-load-desc" data-i18n="solve.shard.load.desc">导入任意一个分片链接/JSON，或直接导入一组分片文件。</p>
+                    <p class="solve-load-desc" data-i18n="solve.shard.load.desc">导入任意一个分片链接/JSON，或导入包含整组分片的 JSON 文件。</p>
                     <div class="form-hint solve-load-note" data-i18n="solve.shard.load.note">集齐足够分片后，就能像集齐龙珠一样把秘密恢复出来。</div>
                     <div class="btn-group">
                         <div class="file-input-wrapper">
@@ -199,7 +199,7 @@
                         </div>
                         <button class="btn btn-secondary" id="btn-paste-shard" data-i18n="solve.shard.load.paste">粘贴分片链接或 JSON</button>
                     </div>
-                    <div id="solve-shard-load-error" class="hidden"></div>
+                    <div id="solve-shard-load-error" class="hidden" aria-live="polite"></div>
                     <div id="paste-shard-area" class="hidden paste-link-area">
                         <textarea id="paste-shard-input" data-i18n-placeholder="solve.shard.load.placeholder" placeholder="粘贴单个分片链接、单个分片 JSON，或分片数组 JSON..." class="paste-link-input"></textarea>
                         <button class="btn btn-primary paste-link-submit" id="btn-load-shard" data-i18n="solve.shard.load.submit">加载分片</button>
@@ -220,7 +220,7 @@
                         <button class="btn btn-secondary" id="btn-add-shard-input" data-i18n="solve.shard.merge.add_input">+ 添加分片输入框</button>
                         <button class="btn btn-success" id="btn-merge-shards" data-i18n="solve.shard.merge.submit">恢复秘密</button>
                     </div>
-                    <div id="shard-merge-result" class="hidden"></div>
+                    <div id="shard-merge-result" class="hidden" aria-live="polite"></div>
                 </div>
             </div>
         </div>
