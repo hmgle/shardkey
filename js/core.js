@@ -19,6 +19,8 @@ var DEFAULTS = {
     aesGcmIvBytes: 12,
 };
 
+var MAX_SHARE_COMBINATION_ATTEMPTS = 1024;
+
 function resolveDefaults(options) {
     return Object.assign({}, DEFAULTS, options && options.limits ? options.limits : null);
 }
@@ -54,11 +56,11 @@ function normalizeAnswer(text) {
 }
 
 function bytesToBase64Url(bytes) {
-    var binary = '';
+    var parts = new Array(bytes.length);
     for (var i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
+        parts[i] = String.fromCharCode(bytes[i]);
     }
-    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    return btoa(parts.join('')).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 function base64UrlToBytes(base64url, options) {
@@ -183,6 +185,58 @@ async function aesGcmDecrypt(keyBytes, box, aadLabel, options) {
         ciphertext
     );
     return new Uint8Array(plaintext);
+}
+
+function isExpectedDecryptFailure(error) {
+    if (!error) {
+        return false;
+    }
+    if (typeof DOMException !== 'undefined' && error instanceof DOMException) {
+        return true;
+    }
+    return error.name === 'OperationError' || error.name === 'InvalidAccessError' || error.name === 'DataError';
+}
+
+function nextCombination(indices, total) {
+    var count = indices.length;
+    for (var i = count - 1; i >= 0; i--) {
+        if (indices[i] < total - count + i) {
+            indices[i] += 1;
+            for (var j = i + 1; j < count; j++) {
+                indices[j] = indices[j - 1] + 1;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+async function decryptSecretFromShares(shares, threshold, secretBox, aadLabel, options) {
+    var indices = [];
+    for (var i = 0; i < threshold; i++) {
+        indices.push(i);
+    }
+    var attempts = 0;
+    do {
+        var selectedShares = [];
+        for (var j = 0; j < indices.length; j++) {
+            selectedShares.push(shares[indices[j]]);
+        }
+        try {
+            var secretKey = combineSecretShares(selectedShares, options);
+            return await aesGcmDecrypt(secretKey, secretBox, aadLabel, options);
+        } catch (e) {
+            if (!isExpectedDecryptFailure(e)) {
+                throw e;
+            }
+        }
+        attempts += 1;
+    } while (
+        shares.length > threshold &&
+        attempts < MAX_SHARE_COMBINATION_ATTEMPTS &&
+        nextCombination(indices, shares.length)
+    );
+    throw new Error('Secret recovery failed');
 }
 
 function gfMul(a, b) {
@@ -678,6 +732,9 @@ async function decryptQuestionShare(question, answer, challenge, options) {
             }
             return shareBytes;
         } catch (e) {
+            if (!isExpectedDecryptFailure(e)) {
+                throw e;
+            }
         }
     }
     return null;
@@ -712,8 +769,7 @@ async function recoverSecret(challenge, answers, options) {
         };
     }
     try {
-        var secretKey = combineSecretShares(shares.slice(0, normalized.threshold), options);
-        var secretBytes = await aesGcmDecrypt(secretKey, normalized.secretBox, makeSecretBoxAad(), options);
+        var secretBytes = await decryptSecretFromShares(shares, normalized.threshold, normalized.secretBox, makeSecretBoxAad(), options);
         return {
             success: true,
             secret: new TextDecoder().decode(secretBytes),
@@ -745,7 +801,7 @@ async function generateShards(secret, totalShards, threshold, options) {
     }
     var created = await createEncryptedSecret(secret, options);
     var shares = splitSecretShares(created.keyBytes, totalShards, threshold, options);
-    var challengeId = bytesToHex((await sha256Bytes(getRandomBytes(32)))).slice(0, 16);
+    var challengeId = bytesToHex(getRandomBytes(8));
     var shards = [];
     if (options && typeof options.onProgress === 'function') {
         options.onProgress('progress.splitting_secret', 0, totalShards);
@@ -788,8 +844,7 @@ async function recoverFromShards(shards, options) {
         shares.push({ x: shard.shareIndex, y: shard.shareBytes });
     }
     try {
-        var keyBytes = combineSecretShares(shares.slice(0, first.threshold), options);
-        var secretBytes = await aesGcmDecrypt(keyBytes, first.secretBox, makeSecretBoxAad(), options);
+        var secretBytes = await decryptSecretFromShares(shares, first.threshold, first.secretBox, makeSecretBoxAad(), options);
         return new TextDecoder().decode(secretBytes);
     } catch (e) {
         fail(options, 'errors.shard.recovery_failed');

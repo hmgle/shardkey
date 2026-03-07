@@ -10,23 +10,13 @@ function t(key, params) {
     var out = String(template);
     if (params && typeof params === 'object') {
         Object.keys(params).forEach(function (name) {
-            out = out.replace(new RegExp('\\{' + name + '\}', 'g'), String(params[name]));
+            out = out.replace(new RegExp('\\{' + name + '\\}', 'g'), String(params[name]));
         });
     }
     return out;
 }
 
-var LIMITS = {
-    maxQuestions: 64,
-    maxThreshold: 64,
-    maxShardCount: 20,
-    maxSecretBytes: 1024,
-    maxTitleChars: 120,
-    maxDescChars: 800,
-    maxQuestionTextChars: 400,
-    maxHintChars: 300,
-    maxBase64UrlChars: 30000
-};
+var LIMITS = Object.assign({}, ShardKeyCore.DEFAULTS);
 
 function coreOptions(onProgress) {
     return {

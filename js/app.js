@@ -137,20 +137,11 @@ async function runWorkerTask(taskType, payload, onProgress) {
 // limits.js — 安全稳健的输入边界
 // =====================================================================
 
-var LIMITS = {
-    maxQuestions: 64,
-    maxThreshold: 64,
-    maxShardCount: 20,
-    maxSecretBytes: 1024,
+var LIMITS = Object.assign({}, ShardKeyCore.DEFAULTS, {
     maxUrlHashChars: 20000,
     maxChallengeFileBytes: 250000,
-    maxTitleChars: 120,
-    maxDescChars: 800,
-    maxQuestionTextChars: 400,
-    maxHintChars: 300,
-    maxBase64UrlChars: 30000,
     maxShardTextChars: 50000,
-};
+});
 
 // =====================================================================
 // protocol.js — v4 协议包装（Shamir + AEAD）
@@ -195,10 +186,10 @@ function challengeFromBase64(base64url) {
 }
 
 function challengeToURL(obj) {
-    const base64 = challengeToBase64(obj);
-    let baseURL = window.location.href.split('#')[0];
+    var base64 = challengeToBase64(obj);
+    var baseURL = window.location.href.split('#')[0];
     try {
-        const url = new URL(baseURL);
+        var url = new URL(baseURL);
         url.search = '';
         baseURL = url.toString();
     } catch (e) {
@@ -207,10 +198,10 @@ function challengeToURL(obj) {
 }
 
 function challengeToFile(obj, filename) {
-    const json = JSON.stringify(obj, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    var json = JSON.stringify(obj, null, 2);
+    var blob = new Blob([json], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
     a.href = url;
     a.download = filename || 'challenge.json';
     document.body.appendChild(a);
@@ -229,7 +220,7 @@ function challengeFromFile(file) {
             reject(new Error(t('errors.file.too_large', { size: file.size })));
             return;
         }
-        const reader = new FileReader();
+        var reader = new FileReader();
         reader.onload = function () {
             try {
                 resolve(JSON.parse(reader.result));
@@ -1185,7 +1176,7 @@ btnGenerate.addEventListener('click', async function () {
         var seen = new Set();
         var unique = [];
         for (var ai = 0; ai < nonEmpty.length; ai++) {
-            var norm = normalizeAnswer(nonEmpty[ai]);
+            var norm = ShardKeyCore.normalizeAnswer(nonEmpty[ai]);
             if (!seen.has(norm)) {
                 seen.add(norm);
                 unique.push(nonEmpty[ai]);
@@ -1408,7 +1399,7 @@ function loadShardCollectionFromSource(shards, options) {
 
 function loadChallenge(challenge) {
     try {
-        const normalized = validateChallengeData(challenge);
+        var normalized = validateChallengeData(challenge);
         setAppMode('classic');
         currentChallenge = normalized;
         currentChallengeSource = 'loaded';
@@ -1454,7 +1445,7 @@ function renderSolveChallenge(normalized, preserveAnswers) {
 
     var dateText = t('solve.meta.unknown_date');
     if (normalized.createdAt) {
-        const createdAtDate = new Date(normalized.createdAt);
+        var createdAtDate = new Date(normalized.createdAt);
         if (!isNaN(createdAtDate.getTime())) {
             dateText = createdAtDate.toLocaleDateString(getLocaleForIntl());
         }

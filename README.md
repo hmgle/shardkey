@@ -45,16 +45,17 @@ python3 -m http.server 8000
 
 ### Multiple acceptable answers (per question)
 
-When creating a challenge, each question can accept multiple valid answers: click “+ 添加备选答案” (Add alternative answer) to add more answer inputs. Any one of them being correct counts (case-insensitive).
+When creating a challenge, each question can accept multiple valid answers: click “+ Add alternative answer” to add more answer inputs. Any one of them being correct counts (case-insensitive).
 
 Answer text can contain any characters (including `|`). The app no longer uses separators to split multiple answers.
 
 ## Technical Notes
 
 - Pure HTML/CSS/JavaScript, no external dependencies
+- Current protocol version: `v4`
 - AES-256-GCM via Web Crypto API encrypts the shared secret
 - Shamir Secret Sharing over GF(256) splits a random content key into threshold shares
-- Answers are hardened via PBKDF2 (per-question salt)
+- Answers are hardened via PBKDF2 (per-question salt, 120,000 iterations by default)
 - In `Classic Q&A`, each correct answer decrypts one encrypted Shamir share
 - Share links use a compact packed format to reduce URL length for forwarding and reposting
 - Fully local execution in browser (supports `file://`)
@@ -69,7 +70,7 @@ Answer text can contain any characters (including `|`). The app no longer uses s
 
 ### Important limitations
 
-- Weak/guessable answers are vulnerable to offline dictionary attacks. PBKDF2 hardening slows guessing down, but does not prevent it.
+- Weak/guessable answers are vulnerable to offline dictionary attacks. PBKDF2 hardening slows guessing down, but does not prevent it; the default cost is 120,000 PBKDF2-SHA-256 iterations per answer.
 - Allowing multiple valid answers per question reduces the difficulty of “guessing any acceptable variant”; keep variants minimal and non-obvious.
 - For robustness, the app enforces practical size limits (currently: secret ≤ 1024 bytes, questions ≤ 64, threshold ≤ 64). Larger challenges should be split up.
 - Use a high-entropy secret if you need real confidentiality (e.g. append a random suffix), and prefer higher thresholds.
