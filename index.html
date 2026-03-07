@@ -7,18 +7,35 @@
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
+    <div class="top-bar">
+        <div class="top-bar-inner">
+            <div class="mode-toggle" id="app-mode-switch">
+                <button class="mode-toggle-btn active" data-mode="classic" type="button">
+                    <span aria-hidden="true">🔑</span>
+                    <span data-i18n="mode.classic.name">经典问答</span>
+                </button>
+                <button class="mode-toggle-btn" data-mode="shard" type="button">
+                    <span aria-hidden="true">🧩</span>
+                    <span data-i18n="mode.shard.name">多人合力恢复</span>
+                </button>
+            </div>
+            <div class="lang-switcher" id="lang-switcher">
+                <button class="lang-trigger" type="button" aria-label="Language">
+                    <span class="lang-icon-zh">文</span><span class="lang-icon-en">A</span>
+                </button>
+                <div class="lang-menu">
+                    <button class="lang-option" type="button" data-lang="en">English</button>
+                    <button class="lang-option" type="button" data-lang="ja">日本語</button>
+                    <button class="lang-option" type="button" data-lang="zh-CN">简体中文</button>
+                    <button class="lang-option" type="button" data-lang="zh-TW">繁體中文</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="container">
         <header>
             <h1>ShardKey</h1>
-            <div class="lang-switch">
-                <label class="sr-only" for="lang-select" data-i18n="ui.language">语言</label>
-                <select id="lang-select" aria-label="Language">
-                    <option value="en">English</option>
-                    <option value="ja">日本語</option>
-                    <option value="zh-CN">简体中文</option>
-                    <option value="zh-TW">繁體中文</option>
-                </select>
-            </div>
             <p data-i18n="app.tagline">通过回答问题离线解锁秘密的工具</p>
         </header>
 
@@ -28,26 +45,6 @@
         <div class="tabs">
             <button class="tab-btn active" data-tab="create" data-i18n="tabs.create">创建挑战</button>
             <button class="tab-btn" data-tab="solve" data-i18n="tabs.solve">求解挑战</button>
-        </div>
-
-        <div class="card mode-switch-card">
-            <h2 data-i18n="mode.title">选择模式</h2>
-            <div class="mode-switch" id="app-mode-switch">
-                <button class="mode-option active" data-mode="classic" type="button">
-                    <span class="mode-icon" aria-hidden="true">🔑</span>
-                    <span class="mode-copy">
-                        <span class="mode-name" data-i18n="mode.classic.name">经典问答</span>
-                        <span class="mode-desc" data-i18n="mode.classic.desc">设置问题，答对足够多即可解锁秘密。</span>
-                    </span>
-                </button>
-                <button class="mode-option" data-mode="shard" type="button">
-                    <span class="mode-icon" aria-hidden="true">🧩</span>
-                    <span class="mode-copy">
-                        <span class="mode-name" data-i18n="mode.shard.name">多人合力恢复</span>
-                        <span class="mode-desc" data-i18n="mode.shard.desc">把秘密拆成多个分片，集齐足够分片后恢复。</span>
-                    </span>
-                </button>
-            </div>
         </div>
 
         <!-- ==================== 创建面板 ==================== -->

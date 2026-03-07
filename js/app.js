@@ -448,7 +448,7 @@ var questionIdCounter = 0;
 var tabBtns = document.querySelectorAll('.tab-btn');
 var panelCreate = document.getElementById('panel-create');
 var panelSolve = document.getElementById('panel-solve');
-var modeOptions = document.querySelectorAll('.mode-option');
+var modeOptions = document.querySelectorAll('.mode-toggle-btn');
 var createClassicContent = document.getElementById('create-classic-content');
 var createShardContent = document.getElementById('create-shard-content');
 var solveClassicMode = document.getElementById('solve-classic-mode');
@@ -529,7 +529,8 @@ function escapeHtml(text) {
     return div.innerHTML.replace(/"/g, '&quot;');
 }
 
-var langSelectEl = document.getElementById('lang-select');
+var langSwitcher = document.getElementById('lang-switcher');
+var langOptions = langSwitcher ? langSwitcher.querySelectorAll('.lang-option') : [];
 var lastGeneratedState = null;
 var lastGeneratedShardState = null;
 var currentChallengeSource = '';
@@ -551,11 +552,11 @@ function applyStaticI18n() {
 }
 
 function syncLangSelect() {
-    if (!langSelectEl) return;
-    if (i18n && typeof i18n.getLang === 'function') {
-        langSelectEl.value = i18n.getLang();
-    }
-    langSelectEl.setAttribute('aria-label', t('ui.language'));
+    if (!langSwitcher) return;
+    var current = (i18n && typeof i18n.getLang === 'function') ? i18n.getLang() : '';
+    langOptions.forEach(function (btn) {
+        btn.classList.toggle('active', btn.dataset.lang === current);
+    });
 }
 
 function setAppMode(mode) {
@@ -654,8 +655,12 @@ function checkRuntimeSupport() {
 
 function initI18nUI() {
     syncLangSelect();
-    if (langSelectEl && i18n && typeof i18n.setLang === 'function') {
-        langSelectEl.addEventListener('change', function () { i18n.setLang(langSelectEl.value); });
+    if (langOptions.length && i18n && typeof i18n.setLang === 'function') {
+        langOptions.forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                i18n.setLang(btn.dataset.lang);
+            });
+        });
     }
     if (i18n && typeof i18n.onChange === 'function') {
         i18n.onChange(function () {
