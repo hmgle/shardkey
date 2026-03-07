@@ -756,7 +756,13 @@ footer a:hover {
     }
 
     .top-bar-inner {
-        padding: 8px 12px;
+        padding: 6px 12px;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    header {
+        padding: 20px 0 8px;
     }
 
     header h1 {
@@ -765,6 +771,15 @@ footer a:hover {
 
     .card {
         padding: 16px;
+    }
+
+    /* 防止 iOS Safari 输入框聚焦自动缩放 */
+    input[type="text"],
+    input[type="number"],
+    input[type="password"],
+    textarea,
+    select {
+        font-size: 16px;
     }
 
     .form-row {
@@ -776,20 +791,112 @@ footer a:hover {
         flex-direction: column;
     }
 
+    /* 顶栏模式切换 */
+    .mode-toggle {
+        border-radius: 8px;
+    }
+
     .mode-toggle-btn {
-        padding: 7px 10px;
+        padding: 8px 10px;
         font-size: 0.82em;
     }
 
+    /* 增大触摸目标 */
     .tab-btn {
-        padding: 12px 10px;
+        padding: 14px 10px;
         font-size: 0.9em;
     }
 
+    .btn {
+        min-height: 44px;
+    }
+
+    .btn-remove {
+        min-width: 44px;
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .btn-remove-answer {
+        min-width: 40px;
+        min-height: 40px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .lang-trigger {
+        min-width: 44px;
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .lang-option {
+        padding: 12px 14px;
+    }
+
+    /* 分片链接区域 */
     .shard-link-item,
     .shard-merge-topbar,
     .shard-link-head {
         flex-direction: column;
         align-items: stretch;
+    }
+
+    .share-link,
+    .shard-url-output {
+        font-size: 0.88em;
+    }
+
+    .shard-share-link {
+        min-height: 60px;
+    }
+
+    /* 分片合并标签 */
+    .shard-merge-input label {
+        flex-wrap: wrap;
+    }
+
+    /* 问题项间距 */
+    .question-item {
+        padding: 14px;
+    }
+
+    /* 结果区 */
+    .result-box .result-value {
+        font-size: 1.1em;
+        padding: 10px;
+    }
+}
+
+/* 极窄屏幕 (≤380px) */
+@media (max-width: 380px) {
+    .container {
+        padding: 8px;
+    }
+
+    header h1 {
+        font-size: 1.2em;
+    }
+
+    .card {
+        padding: 12px;
+    }
+
+    .mode-toggle-btn {
+        padding: 6px 8px;
+        font-size: 0.78em;
+    }
+
+    .mode-toggle-btn span[aria-hidden] {
+        display: none;
+    }
+
+    .tab-btn {
+        font-size: 0.85em;
     }
 }
