@@ -148,7 +148,6 @@ var LIMITS = {
     maxDescChars: 800,
     maxQuestionTextChars: 400,
     maxHintChars: 300,
-    maxBigIntDigits: 1400,
     maxBase64UrlChars: 30000,
     maxShardTextChars: 50000,
 };
