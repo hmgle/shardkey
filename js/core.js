@@ -30,7 +30,16 @@ function translate(options, key, params) {
     var out = String(key);
     if (params && typeof params === 'object') {
         Object.keys(params).forEach(function (name) {
-            out = out.replace(new RegExp('\\{' + name + '\\}', 'g'), String(params[name]));
+            var placeholder = '{' + name + '}';
+            var value = String(params[name]);
+            var result = '';
+            var idx;
+            var start = 0;
+            while ((idx = out.indexOf(placeholder, start)) !== -1) {
+                result += out.substring(start, idx) + value;
+                start = idx + placeholder.length;
+            }
+            out = result + out.substring(start);
         });
     }
     return out;
@@ -54,9 +63,10 @@ function normalizeAnswer(text) {
 }
 
 function bytesToBase64Url(bytes) {
-    var parts = new Array(bytes.length);
-    for (var i = 0; i < bytes.length; i++) {
-        parts[i] = String.fromCharCode(bytes[i]);
+    var CHUNK = 8192;
+    var parts = [];
+    for (var i = 0; i < bytes.length; i += CHUNK) {
+        parts.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + CHUNK, bytes.length))));
     }
     return btoa(parts.join('')).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
@@ -226,43 +236,31 @@ async function decryptSecretFromShares(shares, threshold, secretBox, aadLabel, o
     throw new Error('Secret recovery failed');
 }
 
-function gfMul(a, b) {
-    var aa = a & 0xff;
-    var bb = b & 0xff;
-    var p = 0;
-    while (bb) {
-        if (bb & 1) {
-            p ^= aa;
-        }
-        var hiBit = aa & 0x80;
-        aa = (aa << 1) & 0xff;
-        if (hiBit) {
-            aa ^= 0x1b;
-        }
-        bb >>= 1;
+// GF(256) exp/log lookup tables (generator = 3, polynomial 0x11b)
+var GF_EXP = new Uint8Array(512);
+var GF_LOG = new Uint16Array(256);
+(function () {
+    var x = 1;
+    for (var i = 0; i < 255; i++) {
+        GF_EXP[i] = x;
+        GF_EXP[i + 255] = x;
+        GF_LOG[x] = i;
+        var x2 = (x << 1) & 0xff;
+        if (x & 0x80) x2 ^= 0x1b;
+        x = x2 ^ x;
     }
-    return p & 0xff;
-}
+})();
 
-function gfPow(a, exponent) {
-    var result = 1;
-    var base = a & 0xff;
-    var exp = exponent >>> 0;
-    while (exp > 0) {
-        if (exp & 1) {
-            result = gfMul(result, base);
-        }
-        exp >>>= 1;
-        base = gfMul(base, base);
-    }
-    return result & 0xff;
+function gfMul(a, b) {
+    if (a === 0 || b === 0) return 0;
+    return GF_EXP[GF_LOG[a] + GF_LOG[b]];
 }
 
 function gfInv(a, options) {
-    if ((a & 0xff) === 0) {
+    if (a === 0) {
         fail(options, 'errors.shamir.invalid_share');
     }
-    return gfPow(a, 254);
+    return GF_EXP[255 - GF_LOG[a]];
 }
 
 function gfDiv(a, b, options) {

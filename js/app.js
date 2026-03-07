@@ -10,7 +10,16 @@ function t(key, params) {
     var out = String(key);
     if (params && typeof params === 'object') {
         Object.keys(params).forEach(function (k) {
-            out = out.replace(new RegExp('\\{' + k + '\\}', 'g'), String(params[k]));
+            var placeholder = '{' + k + '}';
+            var value = String(params[k]);
+            var result = '';
+            var idx;
+            var start = 0;
+            while ((idx = out.indexOf(placeholder, start)) !== -1) {
+                result += out.substring(start, idx) + value;
+                start = idx + placeholder.length;
+            }
+            out = result + out.substring(start);
         });
     }
     return out;
@@ -50,60 +59,90 @@ async function runTaskLocally(taskType, payload, onProgress) {
     throw new Error('Unknown task type: ' + taskType);
 }
 
-async function runWorkerTask(taskType, payload, onProgress) {
-    if (typeof Worker === 'undefined') {
-        return await runTaskLocally(taskType, payload, onProgress);
-    }
+var persistentWorker = null;
+var workerSupported = typeof Worker !== 'undefined';
+var workerTaskQueue = Promise.resolve();
 
-    var worker;
+function ensureWorker() {
+    if (!workerSupported) return null;
+    if (persistentWorker) return persistentWorker;
     try {
-        worker = new Worker('js/worker.js');
+        persistentWorker = new Worker('js/worker.js');
+        return persistentWorker;
     } catch (e) {
-        return await runTaskLocally(taskType, payload, onProgress);
+        workerSupported = false;
+        return null;
+    }
+}
+
+function discardWorker() {
+    if (persistentWorker) {
+        try { persistentWorker.terminate(); } catch (e) {}
+        persistentWorker = null;
+    }
+}
+
+function runWorkerTask(taskType, payload, onProgress) {
+    var gate;
+    var prevQueue = workerTaskQueue;
+    workerTaskQueue = new Promise(function (r) { gate = r; });
+
+    return prevQueue.then(function () {
+        return runWorkerTaskInner(taskType, payload, onProgress, gate);
+    });
+}
+
+async function runWorkerTaskInner(taskType, payload, onProgress, release) {
+    var worker = ensureWorker();
+    if (!worker) {
+        try {
+            return await runTaskLocally(taskType, payload, onProgress);
+        } finally {
+            release();
+        }
     }
 
     return await new Promise(function (resolve, reject) {
         var settled = false;
-        var fellBack = false;
 
-        function cleanup() {
-            if (!worker) return;
+        function detach() {
             worker.onmessage = null;
             worker.onerror = null;
             worker.onmessageerror = null;
-            worker.terminate();
-            worker = null;
         }
 
         function finishWithResult(result) {
             if (settled) return;
             settled = true;
-            cleanup();
+            detach();
+            release();
             resolve(result);
         }
 
         function finishWithError(error) {
             if (settled) return;
             settled = true;
-            cleanup();
+            detach();
+            release();
             reject(error);
         }
 
         function fallbackToLocal() {
-            if (settled || fellBack) return;
-            fellBack = true;
-            cleanup();
-            runTaskLocally(taskType, payload, onProgress).then(finishWithResult, finishWithError);
+            if (settled) return;
+            settled = true;
+            detach();
+            discardWorker();
+            runTaskLocally(taskType, payload, onProgress).then(
+                function (r) { release(); resolve(r); },
+                function (e) { release(); reject(e); }
+            );
         }
 
         worker.onmessage = function (event) {
             var data = event.data || {};
             if (data.type === 'progress') {
                 if (typeof onProgress === 'function') {
-                    try {
-                        onProgress(data.msg, data.done, data.total);
-                    } catch (e) {
-                    }
+                    try { onProgress(data.msg, data.done, data.total); } catch (e) {}
                 }
                 return;
             }

@@ -885,6 +885,80 @@ footer a:hover {
     }
 }
 
+/* 暗色模式 */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #18181b;
+        --surface: #27272a;
+        --text: #e4e4e7;
+        --text-secondary: #a1a1aa;
+        --primary: #60a5fa;
+        --primary-hover: #3b82f6;
+        --success: #4ade80;
+        --error: #f87171;
+        --warning: #fbbf24;
+        --border: #3f3f46;
+        --border-focus: #60a5fa;
+        --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+        --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.4);
+    }
+
+    .top-bar {
+        background: rgba(24, 24, 27, 0.85);
+    }
+
+    .question-item {
+        background: #1f1f23;
+    }
+
+    .result-box.success {
+        background: #052e16;
+        border-color: #166534;
+    }
+
+    .result-box.error {
+        background: #450a0a;
+        border-color: #991b1b;
+    }
+
+    .result-box.info {
+        background: #172554;
+        border-color: #1e40af;
+    }
+
+    .result-box.warning {
+        background: #451a03;
+        border-color: #92400e;
+    }
+
+    .result-box .result-value {
+        background: #18181b;
+    }
+
+    .btn-primary:disabled {
+        background: #1e3a5f;
+        color: #94a3b8;
+    }
+
+    .shard-success-glow {
+        background: linear-gradient(135deg, #052e16, #042f2e);
+        border-color: #166534;
+    }
+
+    .shard-link-item {
+        background: rgba(96, 165, 250, 0.05);
+    }
+
+    .share-link,
+    .shard-url-output {
+        background: #1f1f23;
+    }
+
+    .challenge-info {
+        background: #1f1f23;
+    }
+}
+
 /* 极窄屏幕 (≤380px) */
 @media (max-width: 380px) {
     .container {

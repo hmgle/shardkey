@@ -1070,7 +1070,16 @@
         if (params && typeof params === 'object') {
             Object.keys(params).forEach(function (k) {
                 var val = params[k];
-                out = out.replace(new RegExp('\{' + k + '\}', 'g'), String(val));
+                var ph = '{' + k + '}';
+                var vi = String(val);
+                var result = '';
+                var pi;
+                var si = 0;
+                while ((pi = out.indexOf(ph, si)) !== -1) {
+                    result += out.substring(si, pi) + vi;
+                    si = pi + ph.length;
+                }
+                out = result + out.substring(si);
             });
         }
         return out;

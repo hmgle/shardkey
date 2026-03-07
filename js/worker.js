@@ -10,7 +10,16 @@ function t(key, params) {
     var out = String(template);
     if (params && typeof params === 'object') {
         Object.keys(params).forEach(function (name) {
-            out = out.replace(new RegExp('\\{' + name + '\\}', 'g'), String(params[name]));
+            var placeholder = '{' + name + '}';
+            var value = String(params[name]);
+            var result = '';
+            var idx;
+            var start = 0;
+            while ((idx = out.indexOf(placeholder, start)) !== -1) {
+                result += out.substring(start, idx) + value;
+                start = idx + placeholder.length;
+            }
+            out = result + out.substring(start);
         });
     }
     return out;
