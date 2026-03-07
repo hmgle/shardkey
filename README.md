@@ -52,10 +52,10 @@ Answer text can contain any characters (including `|`). The app no longer uses s
 ## Technical Notes
 
 - Pure HTML/CSS/JavaScript, no external dependencies
-- BigInt-based large integer arithmetic
-- SHA-256 via Web Crypto API
+- AES-256-GCM via Web Crypto API encrypts the shared secret
+- Shamir Secret Sharing over GF(256) splits a random content key into threshold shares
 - Answers are hardened via PBKDF2 (per-question salt)
-- Each accepted answer stores a verification tag so recovery can validate answers before CRT reconstruction
+- In `Classic Q&A`, each correct answer decrypts one encrypted Shamir share
 - Share links use a compact packed format to reduce URL length for forwarding and reposting
 - Fully local execution in browser (supports `file://`)
 - Uses a Web Worker when available to keep generation and recovery off the main UI thread
@@ -65,7 +65,7 @@ Answer text can contain any characters (including `|`). The app no longer uses s
 - ShardKey is positioned as an offline Q&A unlocker, not as a replacement for audited cryptographic secret-sharing systems.
 - Shared data does not include the plaintext secret, correct answers, or answer hashes
 - The threshold logic is meant to gate offline unlocking, not to protect high-value secrets like a password vault
-- The recovered secret is validated by an embedded checksum and avoids false unlocks
+- The secret is recovered only after enough shares reconstruct the AES key and the AEAD check succeeds
 
 ### Important limitations
 
@@ -73,5 +73,5 @@ Answer text can contain any characters (including `|`). The app no longer uses s
 - Allowing multiple valid answers per question reduces the difficulty of “guessing any acceptable variant”; keep variants minimal and non-obvious.
 - For robustness, the app enforces practical size limits (currently: secret ≤ 1024 bytes, questions ≤ 64, threshold ≤ 64). Larger challenges should be split up.
 - Use a high-entropy secret if you need real confidentiality (e.g. append a random suffix), and prefer higher thresholds.
-- Mignotte/CRT is not Shamir secret sharing and does not provide perfect secrecy; do not treat this tool as a substitute for vetted cryptographic secret sharing.
+- `Classic Q&A` still depends on answer strength. A weak answer can let an attacker recover one encrypted share offline.
 - If you need strong cryptographic protection, use an audited secret-sharing system or a password manager instead of relying on challenge questions alone.

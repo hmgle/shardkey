@@ -154,489 +154,35 @@ var LIMITS = {
 };
 
 // =====================================================================
-// crt.js — 核心数学模块（纯 BigInt 运算）
+// protocol.js — v4 协议包装（Shamir + AEAD）
 // =====================================================================
 
-function gcd(a, b) {
-    a = a < 0n ? -a : a;
-    b = b < 0n ? -b : b;
-    while (b !== 0n) {
-        [a, b] = [b, a % b];
-    }
-    return a;
-}
-
-function extendedGcd(a, b) {
-    if (b === 0n) {
-        return { gcd: a, x: 1n, y: 0n };
-    }
-    const result = extendedGcd(b, a % b);
-    return {
-        gcd: result.gcd,
-        x: result.y,
-        y: result.x - (a / b) * result.y,
+function getCoreOptions(extra) {
+    var base = {
+        translate: t,
+        limits: LIMITS,
     };
-}
-
-function modPow(base, exp, mod) {
-    if (mod === 1n) return 0n;
-    base = ((base % mod) + mod) % mod;
-    let result = 1n;
-    while (exp > 0n) {
-        if (exp & 1n) {
-            result = (result * base) % mod;
-        }
-        exp >>= 1n;
-        base = (base * base) % mod;
-    }
-    return result;
-}
-
-function solveCRT(remainders, moduli) {
-    const k = remainders.length;
-    if (k === 0) throw new Error(t('errors.crt.min_pairs'));
-    if (k !== moduli.length) throw new Error(t('errors.crt.length_mismatch'));
-
-    let M = 1n;
-    for (let i = 0; i < k; i++) {
-        M *= moduli[i];
-    }
-
-    let x = 0n;
-    for (let i = 0; i < k; i++) {
-        const Mi = M / moduli[i];
-        const { y: yi } = extendedGcd(moduli[i], Mi);
-        x = (x + Mi * yi * remainders[i]) % M;
-    }
-
-    return ((x % M) + M) % M;
-}
-
-// =====================================================================
-// crypto.js — 密码学模块（SHA-256、素数生成、答案归一化）
-// =====================================================================
-
-function normalizeAnswer(text) {
-    text = String(text || '');
-    if (typeof text.normalize === 'function') {
-        text = text.normalize('NFKC');
-    }
-    text = text.replace(/[\u200B-\u200D\uFEFF]/g, '');
-    return text.trim().replace(/\s+/g, ' ').toLowerCase();
-}
-
-async function sha256Bytes(data) {
-    let buffer;
-    if (typeof data === 'string') {
-        buffer = new TextEncoder().encode(data);
-    } else if (data instanceof Uint8Array) {
-        buffer = data;
-    } else {
-        buffer = new Uint8Array(data);
-    }
-    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-    return new Uint8Array(hashBuffer);
-}
-
-function getSecureRandomBigInt(bits) {
-    const bytes = Math.ceil(bits / 8);
-    const arr = new Uint8Array(bytes);
-    crypto.getRandomValues(arr);
-    const excessBits = bytes * 8 - bits;
-    if (excessBits > 0) {
-        arr[0] &= (1 << (8 - excessBits)) - 1;
-    }
-    let hex = '';
-    for (const b of arr) {
-        hex += b.toString(16).padStart(2, '0');
-    }
-    return BigInt('0x0' + hex);
-}
-
-function getSecureRandomBigIntInRange(min, max) {
-    if (max < min) throw new Error(t('errors.random.invalid_range'));
-    if (max === min) return min;
-
-    const span = max - min + 1n;
-    const bits = span.toString(2).length;
-    let candidate;
-    do {
-        candidate = getSecureRandomBigInt(bits);
-    } while (candidate >= span);
-    return min + candidate;
-}
-
-function getSecureRandomBytes(byteLength) {
-    const arr = new Uint8Array(byteLength);
-    crypto.getRandomValues(arr);
-    return arr;
-}
-
-function yieldToUI() {
-    return new Promise(function (resolve) {
-        setTimeout(resolve, 0);
+    if (!extra) return base;
+    Object.keys(extra).forEach(function (key) {
+        base[key] = extra[key];
     });
-}
-
-function millerRabin(n, rounds) {
-    if (rounds === undefined) rounds = 20;
-    if (n < 2n) return false;
-    if (n === 2n || n === 3n) return true;
-    if (n % 2n === 0n) return false;
-
-    let r = 0n;
-    let d = n - 1n;
-    while (d % 2n === 0n) {
-        d /= 2n;
-        r++;
-    }
-
-    const smallPrimes = [2n, 3n, 5n, 7n, 11n, 13n, 17n, 19n, 23n, 29n, 31n, 37n];
-
-    for (let i = 0; i < rounds; i++) {
-        let a;
-        if (i < smallPrimes.length && smallPrimes[i] < n - 2n) {
-            a = smallPrimes[i];
-        } else {
-            const bits = n.toString(2).length;
-            do {
-                a = getSecureRandomBigInt(bits);
-            } while (a < 2n || a >= n - 2n);
-        }
-
-        let x = modPow(a, d, n);
-
-        if (x === 1n || x === n - 1n) continue;
-
-        let composite = true;
-        for (let j = 1n; j < r; j++) {
-            x = modPow(x, 2n, n);
-            if (x === n - 1n) {
-                composite = false;
-                break;
-            }
-        }
-
-        if (composite) return false;
-    }
-
-    return true;
-}
-
-async function generatePrime(bits) {
-    let attempts = 0;
-    while (true) {
-        let candidate = getSecureRandomBigInt(bits);
-        candidate |= (1n << BigInt(bits - 1));
-        candidate |= 1n;
-        if (millerRabin(candidate)) {
-            return candidate;
-        }
-        attempts++;
-        if (attempts % 32 === 0) {
-            await yieldToUI();
-        }
-    }
-}
-
-async function generateModuli(count, bitSize, onProgress) {
-    const moduli = [];
-    for (let i = 0; i < count; i++) {
-        let prime;
-        do {
-            prime = await generatePrime(bitSize);
-        } while (moduli.some(function (m) { return m === prime; }));
-        moduli.push(prime);
-        if (onProgress) onProgress(i + 1, count);
-        await yieldToUI();
-    }
-    return moduli;
-}
-
-async function deriveAnswerKeyMaterialPBKDF2(answer, saltBytes, iterations, dkLenBytes) {
-    const normalized = normalizeAnswer(answer);
-    const inputBytes = new TextEncoder().encode(normalized);
-    const keyMaterial = await crypto.subtle.importKey(
-        'raw',
-        inputBytes,
-        { name: 'PBKDF2' },
-        false,
-        ['deriveBits']
-    );
-
-    const derivedBits = await crypto.subtle.deriveBits(
-        { name: 'PBKDF2', hash: 'SHA-256', salt: saltBytes, iterations: iterations },
-        keyMaterial,
-        dkLenBytes * 8
-    );
-
-    const keyBytes = new Uint8Array(derivedBits);
-    return {
-        keyBytes: keyBytes,
-        keyBigInt: bytesToBigInt(keyBytes),
-    };
-}
-
-
-async function computeAnswerVerificationTag(keyBytes, saltBytes, modulusBigInt, xorValueBigInt) {
-    const tagInput = [
-        'shardkey-answer-tag-v1',
-        bytesToBase64Url(keyBytes),
-        bytesToBase64Url(saltBytes),
-        modulusBigInt.toString(),
-        xorValueBigInt.toString(),
-    ].join('|');
-    const tagBytes = (await sha256Bytes(tagInput)).slice(0, 16);
-    return bytesToBase64Url(tagBytes);
-}
-
-// =====================================================================
-// encoding.js — 编码模块
-// =====================================================================
-
-function bytesToBigInt(bytes) {
-    if (!bytes || bytes.length === 0) return 0n;
-    let hex = '';
-    for (const b of bytes) {
-        hex += b.toString(16).padStart(2, '0');
-    }
-    return BigInt('0x' + hex);
-}
-
-function bytesToHex(bytes) {
-    if (!bytes || bytes.length === 0) return '';
-    let hex = '';
-    for (const b of bytes) {
-        hex += b.toString(16).padStart(2, '0');
-    }
-    return hex;
-}
-
-function bigIntToBytes(n, byteLength) {
-    if (byteLength === 0) return new Uint8Array(0);
-    let hex = n.toString(16);
-    hex = hex.padStart(byteLength * 2, '0');
-    const bytes = new Uint8Array(byteLength);
-    for (let i = 0; i < byteLength; i++) {
-        bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-    }
-    return bytes;
-}
-
-function getSecretValueBase(byteLength) {
-    if (byteLength <= 0) return 1n;
-    return 1n << (8n * BigInt(byteLength));
-}
-
-function bytesToBase64Url(bytes) {
-    let binary = '';
-    for (const b of bytes) {
-        binary += String.fromCharCode(b);
-    }
-    let base64 = btoa(binary);
-    base64 = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    return base64;
-}
-
-function base64UrlToBytes(base64url) {
-    if (typeof base64url !== 'string' || base64url.length === 0 || base64url.length > LIMITS.maxBase64UrlChars) {
-        throw new Error(t('errors.base64url.invalid_field'));
-    }
-    if (!/^[0-9A-Za-z_-]+$/.test(base64url)) {
-        throw new Error(t('errors.base64url.invalid_field'));
-    }
-    let base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
-    while (base64.length % 4 !== 0) {
-        base64 += '=';
-    }
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
-}
-
-function bigIntToBase64Url(n) {
-    if (typeof n !== 'bigint' || n < 0n) {
-        throw new Error(t('errors.base64url.invalid_field'));
-    }
-    if (n === 0n) {
-        return 'AA';
-    }
-    let hex = n.toString(16);
-    if (hex.length % 2 !== 0) {
-        hex = '0' + hex;
-    }
-    const bytes = new Uint8Array(hex.length / 2);
-    for (let i = 0; i < bytes.length; i++) {
-        bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-    }
-    return bytesToBase64Url(bytes);
-}
-
-function base64UrlToBigInt(base64url) {
-    return bytesToBigInt(base64UrlToBytes(base64url));
-}
-
-function packBase64UrlList(values) {
-    if (!Array.isArray(values) || values.length === 0) {
-        throw new Error(t('errors.link.invalid_data'));
-    }
-    return values.join('.');
-}
-
-function unpackBase64UrlList(value) {
-    if (typeof value !== 'string' || value.length === 0) {
-        throw new Error(t('errors.link.invalid_data'));
-    }
-    const parts = value.split('.');
-    if (!parts.length || parts.some(function (part) { return !part; })) {
-        throw new Error(t('errors.link.invalid_data'));
-    }
-    return parts;
+    return base;
 }
 
 function getDefaultChallengeKdf() {
-    return {
-        type: 'pbkdf2-sha256',
-        hash: 'SHA-256',
-        iterations: 120000,
-        dkLen: 32,
-        saltLen: 16,
-    };
+    return ShardKeyCore.getDefaultChallengeKdf();
 }
 
 function packChallengeForShare(challenge) {
-    if (!challenge || !Array.isArray(challenge.questions)) {
-        throw new Error(t('errors.link.invalid_data'));
-    }
-
-    return [
-        1,
-        typeof challenge.title === 'string' ? challenge.title : '',
-        typeof challenge.description === 'string' ? challenge.description : '',
-        Number(challenge.threshold) || 0,
-        Number(challenge.secretByteLength) || 0,
-        Number(challenge.secretPayloadByteLength) || 0,
-        typeof challenge.createdAt === 'string' ? challenge.createdAt : '',
-        challenge.questions.map(function (question) {
-            const xorValues = Array.isArray(question.xorValues) ? question.xorValues : [];
-            const xorTags = Array.isArray(question.xorTags) ? question.xorTags : [];
-            return [
-                typeof question.text === 'string' ? question.text : '',
-                typeof question.hint === 'string' ? question.hint : '',
-                bigIntToBase64Url(BigInt(String(question.modulus || '0'))),
-                String(question.salt || ''),
-                packBase64UrlList(xorValues.map(function (value) { return bigIntToBase64Url(BigInt(String(value || '0'))); })),
-                packBase64UrlList(xorTags.map(function (tag) { return String(tag || ''); })),
-            ];
-        }),
-    ];
+    return ShardKeyCore.packChallengeForShare(challenge, getCoreOptions());
 }
 
 function unpackChallengeFromShare(payload) {
-    if (!Array.isArray(payload) || payload.length !== 8 || payload[0] !== 1 || !Array.isArray(payload[7])) {
-        throw new Error(t('errors.link.invalid_data'));
-    }
-
-    return {
-        version: 3,
-        secretEncoding: 'offset-payload-v3',
-        title: typeof payload[1] === 'string' ? payload[1] : t('defaults.challenge_title'),
-        description: typeof payload[2] === 'string' ? payload[2] : '',
-        threshold: Number(payload[3]),
-        secretByteLength: Number(payload[4]),
-        secretPayloadByteLength: Number(payload[5]),
-        kdf: getDefaultChallengeKdf(),
-        questions: payload[7].map(function (question, index) {
-            if (!Array.isArray(question) || question.length !== 6) {
-                throw new Error(t('errors.link.invalid_data'));
-            }
-            const packedXorValues = unpackBase64UrlList(question[4]);
-            const packedXorTags = unpackBase64UrlList(question[5]);
-            if (packedXorValues.length !== packedXorTags.length) {
-                throw new Error(t('errors.link.invalid_data'));
-            }
-            return {
-                id: index,
-                text: typeof question[0] === 'string' ? question[0] : '',
-                hint: typeof question[1] === 'string' ? question[1] : '',
-                modulus: base64UrlToBigInt(String(question[2] || '')).toString(),
-                xorValues: packedXorValues.map(function (value) { return base64UrlToBigInt(value).toString(); }),
-                xorTags: packedXorTags,
-                salt: String(question[3] || ''),
-            };
-        }),
-        createdAt: typeof payload[6] === 'string' ? payload[6] : '',
-    };
-}
-
-async function encodeSecretPayloadV3(secretText) {
-    const secretBytes = new TextEncoder().encode(secretText);
-    if (secretBytes.length > LIMITS.maxSecretBytes) {
-        throw new Error(t('errors.secret.too_long_bytes', { max: LIMITS.maxSecretBytes }));
-    }
-
-    const checksumBytes = (await sha256Bytes(secretBytes)).slice(0, 16);
-    const payload = new Uint8Array(4 + 2 + secretBytes.length + checksumBytes.length);
-    payload[0] = 0x53; // S
-    payload[1] = 0x4b; // K
-    payload[2] = 0x33; // 3
-    payload[3] = 0x00;
-    payload[4] = (secretBytes.length >> 8) & 0xff;
-    payload[5] = secretBytes.length & 0xff;
-    payload.set(secretBytes, 6);
-    payload.set(checksumBytes, 6 + secretBytes.length);
-
-    return {
-        value: bytesToBigInt(payload),
-        byteLength: payload.length,
-        secretByteLength: secretBytes.length,
-    };
-}
-
-async function decodeSecretPayloadV3(payloadBytes) {
-    if (!(payloadBytes instanceof Uint8Array)) {
-        throw new Error(t('errors.secret.payload.invalid_format'));
-    }
-    const minLen = 4 + 2 + 16;
-    if (payloadBytes.length < minLen) {
-        throw new Error(t('errors.secret.payload.length_invalid'));
-    }
-    if (payloadBytes[0] !== 0x53 || payloadBytes[1] !== 0x4b || payloadBytes[2] !== 0x33 || payloadBytes[3] !== 0x00) {
-        throw new Error(t('errors.secret.payload.marker_invalid'));
-    }
-    const secretLen = (payloadBytes[4] << 8) | payloadBytes[5];
-    const checksumLen = 16;
-    const expectedLen = 4 + 2 + secretLen + checksumLen;
-    if (expectedLen !== payloadBytes.length) {
-        throw new Error(t('errors.secret.payload.length_mismatch'));
-    }
-    const secretBytes = payloadBytes.slice(6, 6 + secretLen);
-    const checksumBytes = payloadBytes.slice(6 + secretLen);
-
-    const computed = (await sha256Bytes(secretBytes)).slice(0, checksumLen);
-    for (let i = 0; i < checksumLen; i++) {
-        if (computed[i] !== checksumBytes[i]) {
-            throw new Error(t('errors.secret.payload.checksum_failed'));
-        }
-    }
-
-    const secretText = new TextDecoder().decode(secretBytes);
-    return { secretText: secretText, secretByteLength: secretLen };
+    return ShardKeyCore.unpackChallengeFromShare(payload, getCoreOptions());
 }
 
 function challengeToBase64(obj) {
-    const json = JSON.stringify(packChallengeForShare(obj));
-    const bytes = new TextEncoder().encode(json);
-    let binary = '';
-    for (const b of bytes) {
-        binary += String.fromCharCode(b);
-    }
-    let base64 = btoa(binary);
-    base64 = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    return base64;
+    return ShardKeyCore.encodeJsonBase64Url(packChallengeForShare(obj));
 }
 
 function challengeFromBase64(base64url) {
@@ -646,20 +192,7 @@ function challengeFromBase64(base64url) {
     if (base64url.length > LIMITS.maxUrlHashChars) {
         throw new Error(t('errors.link.too_long_use_json'));
     }
-    if (!/^[0-9A-Za-z_-]+$/.test(base64url)) {
-        throw new Error(t('errors.link.invalid_data'));
-    }
-    let base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
-    while (base64.length % 4 !== 0) {
-        base64 += '=';
-    }
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-    }
-    const json = new TextDecoder().decode(bytes);
-    return unpackChallengeFromShare(JSON.parse(json));
+    return unpackChallengeFromShare(ShardKeyCore.decodeJsonBase64Url(base64url, getCoreOptions()));
 }
 
 function challengeToURL(obj) {
@@ -670,7 +203,6 @@ function challengeToURL(obj) {
         url.search = '';
         baseURL = url.toString();
     } catch (e) {
-        // ignore
     }
     return baseURL + '#' + base64;
 }
@@ -711,82 +243,16 @@ function challengeFromFile(file) {
     });
 }
 
-async function hashToHex(data) {
-    return bytesToHex(await sha256Bytes(data));
-}
-
-async function checksumMatches(secretText, checksum) {
-    if (typeof checksum !== 'string') return false;
-    var secretBytes = new TextEncoder().encode(String(secretText || ''));
-    var actual = (await hashToHex(secretBytes)).toLowerCase();
-    return actual.substring(0, checksum.length) === checksum.toLowerCase();
-}
-
-function secretToBigInt(text) {
-    var bytes = new TextEncoder().encode(String(text || ''));
-    if (bytes.length === 0) {
-        return { value: 0n, byteLength: 0 };
-    }
-    return {
-        value: bytesToBigInt(bytes),
-        byteLength: bytes.length,
-    };
-}
-
-function bigIntToSecret(n, byteLength) {
-    if (byteLength === 0) return '';
-    return new TextDecoder().decode(bigIntToBytes(n, byteLength));
-}
-
 function packShardForShare(shard) {
-    var normalized = validateShardData(shard);
-    var modulusBigInt = BigInt(normalized.modulus);
-    var remainderBigInt = BigInt(normalized.remainder);
-    var modulusHexLen = modulusBigInt.toString(16).length;
-    var remainderHexLen = remainderBigInt.toString(16).length;
-    var modulusByteLen = Math.ceil(modulusHexLen / 2);
-    var remainderByteLen = Math.ceil(remainderHexLen / 2);
-    return [
-        2,
-        normalized.challengeId,
-        normalized.shardIndex,
-        normalized.totalShards,
-        normalized.threshold,
-        normalized.secretByteLength,
-        normalized.secretChecksum,
-        bytesToBase64Url(bigIntToBytes(modulusBigInt, modulusByteLen)),
-        bytesToBase64Url(bigIntToBytes(remainderBigInt, remainderByteLen)),
-    ];
+    return ShardKeyCore.packShardForShare(shard, getCoreOptions());
 }
 
 function unpackShardFromShare(value) {
-    if (!Array.isArray(value) || value[0] !== 2 || value.length !== 9) {
-        throw new Error(t('errors.shard.link.invalid_data'));
-    }
-    return validateShardData({
-        type: 'shard',
-        version: 3,
-        challengeId: String(value[1]),
-        shardIndex: Number(value[2]),
-        totalShards: Number(value[3]),
-        threshold: Number(value[4]),
-        secretByteLength: Number(value[5]),
-        secretChecksum: String(value[6]),
-        secretEncoding: 'offset-base256',
-        modulus: bytesToBigInt(base64UrlToBytes(String(value[7]))).toString(),
-        remainder: bytesToBigInt(base64UrlToBytes(String(value[8]))).toString(),
-    });
+    return ShardKeyCore.unpackShardFromShare(value, getCoreOptions());
 }
 
 function shardToBase64(shard) {
-    var packed = packShardForShare(shard);
-    var json = JSON.stringify(packed);
-    var bytes = new TextEncoder().encode(json);
-    var binary = '';
-    for (var i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
-    }
-    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    return ShardKeyCore.encodeJsonBase64Url(packShardForShare(shard));
 }
 
 function shardFromBase64(base64url) {
@@ -796,26 +262,11 @@ function shardFromBase64(base64url) {
     if (base64url.length > LIMITS.maxUrlHashChars) {
         throw new Error(t('errors.shard.link.too_long'));
     }
-    if (!/^[0-9A-Za-z_-]+$/.test(base64url)) {
-        throw new Error(t('errors.shard.link.invalid_data'));
-    }
-
-    var base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
-    while (base64.length % 4 !== 0) {
-        base64 += '=';
-    }
-
-    var binary = atob(base64);
-    var bytes = new Uint8Array(binary.length);
-    for (var i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-    }
-
-    var json = new TextDecoder().decode(bytes);
-    return unpackShardFromShare(JSON.parse(json));
+    return unpackShardFromShare(ShardKeyCore.decodeJsonBase64Url(base64url, getCoreOptions()));
 }
 
 function shardToURL(shard) {
+
     var base64 = shardToBase64(shard);
     var baseURL = window.location.href.split('#')[0];
     try {
@@ -947,691 +398,48 @@ function parseShardLoadText(rawText) {
 }
 
 // =====================================================================
-// creator.js — 创建流程
+// task.js — v4 任务入口（委托给共享协议核心）
 // =====================================================================
-
-function calculateModulusBitSize(secretBits, threshold) {
-    const minBits = Math.ceil(Math.max(secretBits, 8) / threshold) + 20;
-    return Math.max(minBits, 32);
-}
-
-function calculateMignotteBounds(moduli, threshold) {
-    const sortedModuli = moduli.slice().sort(function (a, b) { return a < b ? -1 : a > b ? 1 : 0; });
-    let alpha = 1n;
-    for (let i = 0; i < threshold; i++) {
-        alpha *= sortedModuli[i];
-    }
-
-    let beta = 1n;
-    for (let i = sortedModuli.length - (threshold - 1); i < sortedModuli.length; i++) {
-        beta *= sortedModuli[i];
-    }
-
-    return { alpha: alpha, beta: beta };
-}
-
-function chooseEncodedSecret(rawSecretValue, byteLength, alpha, beta) {
-    const base = getSecretValueBase(byteLength);
-    const upper = alpha - 1n;
-    if (upper < rawSecretValue) {
-        throw new Error(t('errors.secret.too_large_for_threshold'));
-    }
-
-    let kMin = 0n;
-    if (beta >= rawSecretValue) {
-        kMin = ((beta - rawSecretValue) / base) + 1n;
-    }
-    const kMax = (upper - rawSecretValue) / base;
-    if (kMax < kMin) {
-        throw new Error(t('errors.secret.cannot_construct_interval'));
-    }
-
-    const k = getSecureRandomBigIntInRange(kMin, kMax);
-    return rawSecretValue + k * base;
-}
-
-function decodeRecoveredSecretValueV3(recovered, secretPayloadByteLength) {
-    const base = getSecretValueBase(secretPayloadByteLength);
-    const mod = recovered % base;
-    return mod < 0n ? mod + base : mod;
-}
 
 async function generateChallenge(secret, questions, threshold, title, description, onProgress) {
-    if (!secret) throw new Error(t('errors.secret.empty'));
-    if (questions.length < threshold) {
-        throw new Error(t('errors.questions.less_than_threshold', { count: questions.length, threshold: threshold }));
-    }
-    if (threshold < 2) throw new Error(t('errors.threshold.min2'));
-
-    const payload = await encodeSecretPayloadV3(secret);
-    const rawSecretValue = payload.value;
-    const payloadByteLength = payload.byteLength;
-    const secretByteLength = payload.secretByteLength;
-    const secretBits = Math.max(1, payloadByteLength * 8);
-
-    const modBits = calculateModulusBitSize(secretBits, threshold);
-
-    let moduli = null;
-    let alpha = 0n;
-    let beta = 0n;
-    let encodedSecret = null;
-    const maxAttempts = 8;
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        const bitSizeForAttempt = modBits + attempt * 2;
-        if (onProgress) onProgress(t('progress.generating_moduli'), 0, questions.length);
-        moduli = await generateModuli(questions.length, bitSizeForAttempt, function (done, total) {
-            if (onProgress) onProgress(t('progress.generating_moduli'), done, total);
-        });
-
-        const bounds = calculateMignotteBounds(moduli, threshold);
-        alpha = bounds.alpha;
-        beta = bounds.beta;
-        if (alpha <= beta) {
-            await yieldToUI();
-            continue;
-        }
-
-        try {
-            encodedSecret = chooseEncodedSecret(rawSecretValue, payloadByteLength, alpha, beta);
-            break;
-        } catch (e) {
-            if (attempt === maxAttempts - 1) {
-                throw e;
+    return await ShardKeyCore.generateChallenge(secret, questions, threshold, title, description, getCoreOptions({
+        onProgress: function (msgKey, done, total) {
+            if (typeof onProgress === 'function') {
+                onProgress(t(msgKey), done, total);
             }
-            await yieldToUI();
-        }
-    }
-
-    if (!moduli || encodedSecret === null) {
-        throw new Error(t('errors.challenge.generate_failed'));
-    }
-
-    const kdf = getDefaultChallengeKdf();
-
-    if (onProgress) onProgress(t('progress.computing_xor_mask'), 0, questions.length);
-    const questionEntries = [];
-    for (let i = 0; i < questions.length; i++) {
-        const q = questions[i];
-        const mi = moduli[i];
-        const remainder = ((encodedSecret % mi) + mi) % mi;
-
-        const answerOptions = Array.isArray(q.answers) ? q.answers : [q.answer];
-        if (answerOptions.length === 0 || !answerOptions.some(function (a) { return String(a || '').trim(); })) {
-            throw new Error(t('errors.question.missing_answer', { n: i + 1 }));
-        }
-        if (answerOptions.length > 16) {
-            throw new Error(t('errors.question.too_many_answers', { n: i + 1, max: 16 }));
-        }
-
-        const saltBytes = getSecureRandomBytes(kdf.saltLen);
-
-        const xorValues = [];
-        const xorTags = [];
-        for (const answerText of answerOptions) {
-            if (!String(answerText || '').trim()) continue;
-            const keyMaterial = await deriveAnswerKeyMaterialPBKDF2(answerText, saltBytes, kdf.iterations, kdf.dkLen);
-            const keyMod = ((keyMaterial.keyBigInt % mi) + mi) % mi;
-            const xorValue = keyMod ^ remainder;
-            xorValues.push(xorValue.toString());
-            xorTags.push(await computeAnswerVerificationTag(keyMaterial.keyBytes, saltBytes, mi, xorValue));
-        }
-        if (xorValues.length === 0) {
-            throw new Error(t('errors.question.missing_answer', { n: i + 1 }));
-        }
-
-        questionEntries.push({
-            id: i,
-            text: q.question,
-            hint: q.hint || '',
-            modulus: mi.toString(),
-            xorValues: xorValues,
-            xorTags: xorTags,
-            salt: bytesToBase64Url(saltBytes),
-        });
-
-        if (onProgress) onProgress(t('progress.computing_xor_mask'), i + 1, questions.length);
-        if ((i + 1) % 4 === 0) {
-            await yieldToUI();
-        }
-    }
-
-    return {
-        version: 3,
-        secretEncoding: 'offset-payload-v3',
-        title: title || t('defaults.challenge_title'),
-        description: description || t('defaults.challenge_desc'),
-        threshold: threshold,
-        secretByteLength: secretByteLength,
-        secretPayloadByteLength: payloadByteLength,
-        kdf: kdf,
-        questions: questionEntries,
-        createdAt: new Date().toISOString(),
-    };
-}
-
-// =====================================================================
-// solver.js — 求解流程
-// =====================================================================
-
-async function findVerifiedQuestionRemainder(question, userAnswer, kdf, modulusBigInt) {
-    const keyMaterial = await deriveAnswerKeyMaterialPBKDF2(userAnswer, question.saltBytes, kdf.iterations, kdf.dkLen);
-    const keyMod = ((keyMaterial.keyBigInt % modulusBigInt) + modulusBigInt) % modulusBigInt;
-    for (let i = 0; i < question.xorValuesBigInt.length; i++) {
-        const xorVal = question.xorValuesBigInt[i];
-        const expectedTag = await computeAnswerVerificationTag(keyMaterial.keyBytes, question.saltBytes, modulusBigInt, xorVal);
-        if (expectedTag === question.xorTags[i]) {
-            return keyMod ^ xorVal;
-        }
-    }
-    return null;
-}
-
-async function decodeRecoveredSecretFromRemainders(remainders, moduli, alpha, beta, secretPayloadByteLength, secretByteLength) {
-    const recovered = solveCRT(remainders, moduli);
-    if (recovered <= beta || recovered >= alpha) {
-        return null;
-    }
-    const decodedValue = decodeRecoveredSecretValueV3(recovered, secretPayloadByteLength);
-    const payloadBytes = bigIntToBytes(decodedValue, secretPayloadByteLength);
-    try {
-        const decoded = await decodeSecretPayloadV3(payloadBytes);
-        if (decoded.secretByteLength !== secretByteLength) {
-            return null;
-        }
-        return decoded.secretText;
-    } catch (e) {
-        return null;
-    }
+        },
+    }));
 }
 
 async function recoverSecret(challenge, answers) {
-    challenge = validateChallengeData(challenge);
-
-    const threshold = challenge.threshold;
-    const secretByteLength = challenge.secretByteLength;
-    const questions = challenge.questions;
-    const secretPayloadByteLength = challenge.secretPayloadByteLength;
-    const kdf = challenge.kdf;
-
-    const answeredQuestions = questions.filter(function (q) {
-        return answers[q.id] !== undefined && String(answers[q.id] || '').trim() !== '';
-    });
-    const answeredCount = answeredQuestions.length;
-
-    if (answeredCount < threshold) {
-        return {
-            success: false,
-            error: t('errors.solver.need_at_least', { threshold: threshold, answered: answeredCount }),
-            answeredCount: answeredCount,
-        };
-    }
-
-    const verifiedEntries = [];
-    for (const q of answeredQuestions) {
-        const userAnswer = String(answers[q.id] || '');
-        const mi = q.modulusBigInt;
-        const verifiedRemainder = await findVerifiedQuestionRemainder(q, userAnswer, kdf, mi);
-        if (verifiedRemainder !== null) {
-            verifiedEntries.push({ modulus: mi, remainder: verifiedRemainder });
-            if (verifiedEntries.length % 8 === 0) {
-                await yieldToUI();
-            }
-        }
-    }
-
-    if (verifiedEntries.length < threshold) {
-        return {
-            success: false,
-            error: t('errors.solver.verify_failed', { suffix: '' }),
-            answeredCount: answeredCount,
-        };
-    }
-
-    const allModuli = questions.map(function (q) { return q.modulusBigInt; });
-    const bounds = calculateMignotteBounds(allModuli, threshold);
-    const alpha = bounds.alpha;
-    const beta = bounds.beta;
-    const solvedEntries = verifiedEntries.slice(0, threshold);
-    const secretText = await decodeRecoveredSecretFromRemainders(
-        solvedEntries.map(function (item) { return item.remainder; }),
-        solvedEntries.map(function (item) { return item.modulus; }),
-        alpha,
-        beta,
-        secretPayloadByteLength,
-        secretByteLength
-    );
-
-    if (secretText === null) {
-        return {
-            success: false,
-            error: t('errors.solver.verify_failed', { suffix: '' }),
-            answeredCount: answeredCount,
-        };
-    }
-
-    return {
-        success: true,
-        secret: secretText,
-        answeredCount: answeredCount,
-        usedCount: threshold,
-    };
-}
-
-function isPlainObject(value) {
-    return value !== null && typeof value === 'object' && !Array.isArray(value);
+    return await ShardKeyCore.recoverSecret(challenge, answers, getCoreOptions());
 }
 
 function validateChallengeData(challenge) {
-    if (!isPlainObject(challenge)) {
-        throw new Error(t('errors.challenge.invalid_format'));
-    }
-
-    const version = Number(challenge.version);
-    if (!Number.isInteger(version) || version !== 3) {
-        throw new Error(t('errors.challenge.only_v3'));
-    }
-    if (challenge.secretEncoding !== 'offset-payload-v3') {
-        throw new Error(t('errors.challenge.unsupported_secret_encoding'));
-    }
-
-    const threshold = Number(challenge.threshold);
-    if (!Number.isInteger(threshold) || threshold < 2 || threshold > LIMITS.maxThreshold) {
-        throw new Error(t('errors.challenge.threshold_invalid_format'));
-    }
-
-    const secretByteLength = Number(challenge.secretByteLength);
-    if (!Number.isInteger(secretByteLength) || secretByteLength < 0 || secretByteLength > LIMITS.maxSecretBytes) {
-        throw new Error(t('errors.challenge.secret_length_field_invalid'));
-    }
-
-    const secretPayloadByteLength = Number(challenge.secretPayloadByteLength);
-    if (!Number.isInteger(secretPayloadByteLength) || secretPayloadByteLength < 22 || secretPayloadByteLength > LIMITS.maxSecretBytes + 22) {
-        throw new Error(t('errors.challenge.secret_payload_length_field_invalid'));
-    }
-    if (secretPayloadByteLength !== secretByteLength + 22) {
-        throw new Error(t('errors.challenge.secret_payload_length_field_invalid'));
-    }
-
-    const expectedSecretBits = Math.max(1, secretPayloadByteLength * 8);
-    const expectedModBits = calculateModulusBitSize(expectedSecretBits, threshold);
-    const allowedModBits = expectedModBits + 256;
-
-    if (!isPlainObject(challenge.kdf)) {
-        throw new Error(t('errors.challenge.kdf_invalid'));
-    }
-    const kdfType = String(challenge.kdf.type || '');
-    const kdfHash = String(challenge.kdf.hash || '');
-    const kdfIterations = Number(challenge.kdf.iterations);
-    const kdfDkLen = Number(challenge.kdf.dkLen);
-    const kdfSaltLen = Number(challenge.kdf.saltLen);
-    if (kdfType !== 'pbkdf2-sha256' || kdfHash !== 'SHA-256') {
-        throw new Error(t('errors.challenge.kdf_invalid'));
-    }
-    if (!Number.isInteger(kdfIterations) || kdfIterations < 1000 || kdfIterations > 2000000) {
-        throw new Error(t('errors.challenge.kdf_iterations_invalid'));
-    }
-    if (!Number.isInteger(kdfDkLen) || kdfDkLen < 16 || kdfDkLen > 64) {
-        throw new Error(t('errors.challenge.kdf_dklen_invalid'));
-    }
-    if (!Number.isInteger(kdfSaltLen) || kdfSaltLen < 8 || kdfSaltLen > 32) {
-        throw new Error(t('errors.challenge.kdf_saltlen_invalid'));
-    }
-    const kdf = { type: kdfType, hash: kdfHash, iterations: kdfIterations, dkLen: kdfDkLen, saltLen: kdfSaltLen };
-
-    if (!Array.isArray(challenge.questions) || challenge.questions.length === 0 || challenge.questions.length > LIMITS.maxQuestions) {
-        throw new Error(t('errors.challenge.questions_list_invalid'));
-    }
-    if (challenge.questions.length < threshold) {
-        throw new Error(t('errors.challenge.question_count_below_threshold'));
-    }
-
-    const seenIds = new Set();
-    const usedModuli = [];
-    const normalizedQuestions = challenge.questions.map(function (q) {
-        if (!isPlainObject(q)) {
-            throw new Error(t('errors.challenge.question_field_invalid'));
-        }
-
-        const id = Number(q.id);
-        if (!Number.isInteger(id) || id < 0) {
-            throw new Error(t('errors.challenge.question_id_invalid'));
-        }
-        if (seenIds.has(id)) {
-            throw new Error(t('errors.challenge.question_id_duplicate'));
-        }
-        seenIds.add(id);
-
-        const text = typeof q.text === 'string' ? q.text : '';
-        const hint = typeof q.hint === 'string' ? q.hint : '';
-        if (text.length > LIMITS.maxQuestionTextChars) throw new Error(t('errors.challenge.question_text_too_long'));
-        if (hint.length > LIMITS.maxHintChars) throw new Error(t('errors.challenge.question_hint_too_long'));
-
-        const modulusStr = String(q.modulus || '');
-        if (!/^\d+$/.test(modulusStr) || modulusStr.length > LIMITS.maxBigIntDigits) {
-            throw new Error(t('errors.challenge.question_params_invalid_format'));
-        }
-        const modulusBigInt = BigInt(modulusStr);
-        if (modulusBigInt <= 2n) {
-            throw new Error(t('errors.challenge.question_params_invalid_value'));
-        }
-        const modulusBits = modulusBigInt.toString(2).length;
-        if (modulusBits > allowedModBits) {
-            throw new Error(t('errors.challenge.question_params_invalid_value'));
-        }
-        function parseQuestionTag(rawTag) {
-            const tag = String(rawTag || '');
-            if (!/^[0-9A-Za-z_-]{8,120}$/.test(tag)) {
-                throw new Error(t('errors.challenge.question_tag_invalid'));
-            }
-            return tag;
-        }
-
-        if (!Array.isArray(q.xorValues) || q.xorValues.length === 0 || q.xorValues.length > 16) {
-            throw new Error(t('errors.challenge.answer_variants_count_invalid'));
-        }
-        if (!Array.isArray(q.xorTags) || q.xorTags.length !== q.xorValues.length) {
-            throw new Error(t('errors.challenge.question_tag_invalid'));
-        }
-
-        const xorValueStrs = q.xorValues.map(function (v) { return String(v || ''); });
-        for (const xvs of xorValueStrs) {
-            if (!/^\d+$/.test(xvs) || xvs.length > LIMITS.maxBigIntDigits) {
-                throw new Error(t('errors.challenge.question_params_invalid_format'));
-            }
-        }
-        const xorValuesBigInt = xorValueStrs.map(function (s) { return BigInt(s); });
-        for (const xvb of xorValuesBigInt) {
-            if (xvb < 0n) {
-                throw new Error(t('errors.challenge.question_params_invalid_value'));
-            }
-            const xorBits = xvb === 0n ? 1 : xvb.toString(2).length;
-            if (xorBits > modulusBits) {
-                throw new Error(t('errors.challenge.question_params_invalid_value'));
-            }
-        }
-        const xorTags = q.xorTags.map(parseQuestionTag);
-
-        const salt = String(q.salt || '');
-        if (!/^[0-9A-Za-z_-]{8,200}$/.test(salt)) {
-            throw new Error(t('errors.challenge.question_salt_invalid'));
-        }
-        const saltBytes = base64UrlToBytes(salt);
-        if (saltBytes.length !== kdf.saltLen) {
-            throw new Error(t('errors.challenge.question_salt_invalid'));
-        }
-
-        for (const prev of usedModuli) {
-            if (gcd(prev, modulusBigInt) !== 1n) {
-                throw new Error(t('errors.challenge.moduli_not_coprime'));
-            }
-        }
-        usedModuli.push(modulusBigInt);
-
-        return {
-            id: id,
-            text: text,
-            hint: hint,
-            modulus: modulusBigInt.toString(),
-            modulusBigInt: modulusBigInt,
-            xorValues: xorValuesBigInt.map(function (v) { return v.toString(); }),
-            xorValuesBigInt: xorValuesBigInt,
-            xorTags: xorTags,
-            salt: salt,
-            saltBytes: saltBytes,
-        };
-    });
-
-    const title = typeof challenge.title === 'string' ? challenge.title : t('defaults.challenge_title');
-    const description = typeof challenge.description === 'string' ? challenge.description : '';
-    if (title.length > LIMITS.maxTitleChars) throw new Error(t('errors.challenge.title_too_long'));
-    if (description.length > LIMITS.maxDescChars) throw new Error(t('errors.challenge.desc_too_long'));
-
-    const allModuli = normalizedQuestions.map(function (q) { return q.modulusBigInt; });
-    const bounds = calculateMignotteBounds(allModuli, threshold);
-    if (bounds.alpha <= bounds.beta) {
-        throw new Error(t('errors.challenge.params_invalid_moduli_bounds'));
-    }
-
-    return {
-        version: version,
-        secretEncoding: 'offset-payload-v3',
-        title: title,
-        description: description,
-        threshold: threshold,
-        secretByteLength: secretByteLength,
-        secretPayloadByteLength: secretPayloadByteLength,
-        kdf: kdf,
-        questions: normalizedQuestions,
-        createdAt: typeof challenge.createdAt === 'string' ? challenge.createdAt : '',
-    };
+    return ShardKeyCore.validateChallengeData(challenge, getCoreOptions());
 }
 
 function validateShardData(shard) {
-    if (!isPlainObject(shard)) {
-        throw new Error(t('errors.shard.invalid_format'));
-    }
-
-    var version = Number(shard.version);
-    if (!Number.isInteger(version) || version !== 3) {
-        throw new Error(t('errors.shard.only_v3'));
-    }
-    if (String(shard.type || '') !== 'shard') {
-        throw new Error(t('errors.shard.type_invalid'));
-    }
-
-    var challengeId = String(shard.challengeId || '').toLowerCase();
-    if (!/^[0-9a-f]{8,64}$/.test(challengeId)) {
-        throw new Error(t('errors.shard.challenge_id_invalid'));
-    }
-
-    var totalShards = Number(shard.totalShards);
-    if (!Number.isInteger(totalShards) || totalShards < 2 || totalShards > LIMITS.maxShardCount) {
-        throw new Error(t('errors.shard.total_invalid', { max: LIMITS.maxShardCount }));
-    }
-
-    var threshold = Number(shard.threshold);
-    if (!Number.isInteger(threshold) || threshold < 2 || threshold > totalShards) {
-        throw new Error(t('errors.shard.threshold_invalid'));
-    }
-
-    var shardIndex = Number(shard.shardIndex);
-    if (!Number.isInteger(shardIndex) || shardIndex < 0 || shardIndex >= totalShards) {
-        throw new Error(t('errors.shard.index_invalid'));
-    }
-
-    var secretByteLength = Number(shard.secretByteLength);
-    if (!Number.isInteger(secretByteLength) || secretByteLength <= 0 || secretByteLength > LIMITS.maxSecretBytes) {
-        throw new Error(t('errors.shard.secret_length_invalid'));
-    }
-
-    var secretChecksum = String(shard.secretChecksum || '').toLowerCase();
-    if (!/^[0-9a-f]{16,64}$/.test(secretChecksum)) {
-        throw new Error(t('errors.shard.checksum_invalid'));
-    }
-
-    if (String(shard.secretEncoding || '') !== 'offset-base256') {
-        throw new Error(t('errors.shard.encoding_invalid'));
-    }
-
-    var modulusStr = String(shard.modulus || '');
-    if (!/^\d+$/.test(modulusStr) || modulusStr.length > LIMITS.maxBigIntDigits) {
-        throw new Error(t('errors.shard.modulus_invalid'));
-    }
-    var modulusBigInt = BigInt(modulusStr);
-    if (modulusBigInt <= 2n) {
-        throw new Error(t('errors.shard.modulus_invalid'));
-    }
-
-    var remainderStr = String(shard.remainder || '');
-    if (!/^\d+$/.test(remainderStr) || remainderStr.length > LIMITS.maxBigIntDigits) {
-        throw new Error(t('errors.shard.remainder_invalid'));
-    }
-    var remainderBigInt = BigInt(remainderStr);
-    if (remainderBigInt < 0n || remainderBigInt >= modulusBigInt) {
-        throw new Error(t('errors.shard.remainder_invalid'));
-    }
-
-    return {
-        type: 'shard',
-        version: version,
-        challengeId: challengeId,
-        shardIndex: shardIndex,
-        totalShards: totalShards,
-        threshold: threshold,
-        secretByteLength: secretByteLength,
-        secretChecksum: secretChecksum,
-        secretEncoding: 'offset-base256',
-        modulus: modulusBigInt.toString(),
-        remainder: remainderBigInt.toString(),
-    };
+    return ShardKeyCore.validateShardData(shard, getCoreOptions());
 }
 
 function normalizeShardCollection(value) {
-    if (!Array.isArray(value) || value.length === 0) {
-        throw new Error(t('errors.shard.collection_empty'));
-    }
-
-    var normalized = value.map(validateShardData);
-    var first = normalized[0];
-    for (var i = 1; i < normalized.length; i++) {
-        var shard = normalized[i];
-        if (
-            shard.challengeId !== first.challengeId ||
-            shard.threshold !== first.threshold ||
-            shard.totalShards !== first.totalShards ||
-            shard.secretByteLength !== first.secretByteLength ||
-            shard.secretChecksum !== first.secretChecksum ||
-            shard.secretEncoding !== first.secretEncoding
-        ) {
-            throw new Error(t('errors.shard.mixed_collection'));
-        }
-    }
-
-    return normalized;
+    return ShardKeyCore.normalizeShardCollection(value, getCoreOptions());
 }
 
 async function generateShards(secret, totalShards, threshold, onProgress) {
-    if (!secret) throw new Error(t('errors.shard.secret_empty'));
-    if (totalShards < 2 || totalShards > LIMITS.maxShardCount) {
-        throw new Error(t('errors.shard.total_invalid', { max: LIMITS.maxShardCount }));
-    }
-    if (threshold < 2) {
-        throw new Error(t('errors.shard.threshold_invalid'));
-    }
-    if (threshold > totalShards) {
-        throw new Error(t('errors.shard.threshold_gt_total'));
-    }
-
-    var secretBytes = new TextEncoder().encode(secret);
-    if (secretBytes.length > LIMITS.maxSecretBytes) {
-        throw new Error(t('validation.secret.too_long', { max: LIMITS.maxSecretBytes }));
-    }
-
-    var rawResult = secretToBigInt(secret);
-    var rawSecretValue = rawResult.value;
-    var byteLength = rawResult.byteLength;
-    var secretBits = Math.max(1, byteLength * 8);
-    var modBits = calculateModulusBitSize(secretBits, threshold);
-
-    var moduli = null;
-    var encodedSecret = null;
-    var maxAttempts = 8;
-
-    for (var attempt = 0; attempt < maxAttempts; attempt++) {
-        var bitSizeForAttempt = modBits + attempt * 2;
-        if (onProgress) onProgress(t('progress.generating_moduli'), 0, totalShards);
-        moduli = await generateModuli(totalShards, bitSizeForAttempt, function (done, total) {
-            if (onProgress) onProgress(t('progress.generating_moduli'), done, total);
-        });
-
-        var bounds = calculateMignotteBounds(moduli, threshold);
-        if (bounds.alpha <= bounds.beta) {
-            await yieldToUI();
-            continue;
-        }
-
-        try {
-            encodedSecret = chooseEncodedSecret(rawSecretValue, byteLength, bounds.alpha, bounds.beta);
-            break;
-        } catch (e) {
-            if (attempt === maxAttempts - 1) throw e;
-            await yieldToUI();
-        }
-    }
-
-    if (!moduli || encodedSecret === null) {
-        throw new Error(t('errors.shard.generate_failed'));
-    }
-
-    var checksum = (await hashToHex(secretBytes)).substring(0, 32);
-    var challengeId = (await hashToHex(new TextEncoder().encode(secret + '|' + Date.now() + '|' + Math.random()))).substring(0, 16);
-
-    var shards = [];
-    for (var i = 0; i < totalShards; i++) {
-        var modulus = moduli[i];
-        var remainder = ((encodedSecret % modulus) + modulus) % modulus;
-        shards.push({
-            type: 'shard',
-            version: 3,
-            challengeId: challengeId,
-            shardIndex: i,
-            totalShards: totalShards,
-            threshold: threshold,
-            secretByteLength: byteLength,
-            secretChecksum: checksum,
-            secretEncoding: 'offset-base256',
-            modulus: modulus.toString(),
-            remainder: remainder.toString(),
-        });
-    }
-
-    return shards;
+    return await ShardKeyCore.generateShards(secret, totalShards, threshold, getCoreOptions({
+        onProgress: function (msgKey, done, total) {
+            if (typeof onProgress === 'function') {
+                onProgress(t(msgKey), done, total);
+            }
+        },
+    }));
 }
 
 async function recoverFromShards(shards) {
-    var normalized = normalizeShardCollection(shards);
-    var first = normalized[0];
-    var threshold = first.threshold;
-
-    if (normalized.length < threshold) {
-        throw new Error(t('errors.shard.need_more', { threshold: threshold, count: normalized.length }));
-    }
-
-    var seenIndices = new Set();
-    var moduli = [];
-    var remainders = [];
-
-    for (var i = 0; i < normalized.length; i++) {
-        var shard = normalized[i];
-        if (seenIndices.has(shard.shardIndex)) {
-            throw new Error(t('errors.shard.duplicate_index', { index: shard.shardIndex + 1 }));
-        }
-        seenIndices.add(shard.shardIndex);
-
-        var modulusBigInt = BigInt(shard.modulus);
-        for (var j = 0; j < moduli.length; j++) {
-            if (gcd(moduli[j], modulusBigInt) !== 1n) {
-                throw new Error(t('errors.shard.moduli_not_coprime'));
-            }
-        }
-
-        moduli.push(modulusBigInt);
-        remainders.push(BigInt(shard.remainder));
-    }
-
-    var recovered = solveCRT(remainders, moduli);
-    var base = getSecretValueBase(first.secretByteLength);
-    var decodedValue = ((recovered % base) + base) % base;
-    var secretText = bigIntToSecret(decodedValue, first.secretByteLength);
-
-    var isMatch = await checksumMatches(secretText, first.secretChecksum);
-    if (!isMatch) {
-        throw new Error(t('errors.shard.checksum_mismatch'));
-    }
-
-    return secretText;
+    return await ShardKeyCore.recoverFromShards(shards, getCoreOptions());
 }
-
 // =====================================================================
 // main.js — 入口：模式切换、URL 检测、事件绑定
 // =====================================================================
@@ -1819,12 +627,13 @@ function setRuntimeWarning(messageHtml) {
 
 function checkRuntimeSupport() {
     var missing = [];
-    if (typeof BigInt === 'undefined') missing.push('BigInt');
     if (typeof TextEncoder === 'undefined' || typeof TextDecoder === 'undefined') missing.push('TextEncoder/TextDecoder');
     if (!window.crypto || typeof crypto.getRandomValues !== 'function') missing.push('crypto.getRandomValues');
     if (!window.crypto || !crypto.subtle || typeof crypto.subtle.digest !== 'function') missing.push('crypto.subtle.digest');
     if (!window.crypto || !crypto.subtle || typeof crypto.subtle.importKey !== 'function') missing.push('crypto.subtle.importKey');
     if (!window.crypto || !crypto.subtle || typeof crypto.subtle.deriveBits !== 'function') missing.push('crypto.subtle.deriveBits');
+    if (!window.crypto || !crypto.subtle || typeof crypto.subtle.encrypt !== 'function') missing.push('crypto.subtle.encrypt');
+    if (!window.crypto || !crypto.subtle || typeof crypto.subtle.decrypt !== 'function') missing.push('crypto.subtle.decrypt');
 
     if (missing.length === 0) {
         setRuntimeWarning('');
