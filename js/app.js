@@ -181,16 +181,33 @@ function challengeFromBase64(base64url) {
     return unpackChallengeFromShare(ShardKeyCore.decodeJsonBase64Url(base64url, getCoreOptions()));
 }
 
-function challengeToURL(obj) {
-    var base64 = challengeToBase64(obj);
+function getCurrentShareLang() {
+    if (!i18n || typeof i18n.getLang !== 'function') {
+        return '';
+    }
+    return i18n.getLang() || '';
+}
+
+function getShareBaseURL() {
     var baseURL = window.location.href.split('#')[0];
     try {
         var url = new URL(baseURL);
         url.search = '';
-        baseURL = url.toString();
+
+        var currentLang = getCurrentShareLang();
+        if (currentLang) {
+            url.searchParams.set('lang', currentLang);
+        }
+
+        return url.toString();
     } catch (e) {
+        return baseURL;
     }
-    return baseURL + '#' + base64;
+}
+
+function challengeToURL(obj) {
+    var base64 = challengeToBase64(obj);
+    return getShareBaseURL() + '#' + base64;
 }
 
 function challengeToFile(obj, filename) {
@@ -253,14 +270,7 @@ function shardFromBase64(base64url) {
 
 function shardToURL(shard) {
     var base64 = shardToBase64(shard);
-    var baseURL = window.location.href.split('#')[0];
-    try {
-        var url = new URL(baseURL);
-        url.search = '';
-        baseURL = url.toString();
-    } catch (e) {
-    }
-    return baseURL + '#shard:' + base64;
+    return getShareBaseURL() + '#shard:' + base64;
 }
 
 function parseSolveHashData(hashData) {
@@ -1228,6 +1238,12 @@ function showGenerateError(msg) {
 
 function renderGenerateResult(state) {
     if (!state) return;
+
+    state.url = challengeToURL(state.challenge);
+    state.urlLen = state.url.length;
+    var hashPos = state.url.indexOf('#');
+    state.hashLen = hashPos >= 0 ? (state.url.length - hashPos - 1) : 0;
+    state.urlDisabled = state.hashLen > LIMITS.maxUrlHashChars;
 
     var urlHint = '';
     if (state.urlDisabled) {
