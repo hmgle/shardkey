@@ -159,10 +159,6 @@ function getCoreOptions(extra) {
     return base;
 }
 
-function getDefaultChallengeKdf() {
-    return ShardKeyCore.getDefaultChallengeKdf();
-}
-
 function packChallengeForShare(challenge) {
     return ShardKeyCore.packChallengeForShare(challenge, getCoreOptions());
 }
@@ -256,7 +252,6 @@ function shardFromBase64(base64url) {
 }
 
 function shardToURL(shard) {
-
     var base64 = shardToBase64(shard);
     var baseURL = window.location.href.split('#')[0];
     try {
@@ -443,7 +438,6 @@ var questionIdCounter = 0;
 var tabBtns = document.querySelectorAll('.tab-btn');
 var panelCreate = document.getElementById('panel-create');
 var panelSolve = document.getElementById('panel-solve');
-var modeSwitch = document.getElementById('app-mode-switch');
 var modeOptions = document.querySelectorAll('.mode-option');
 var createClassicContent = document.getElementById('create-classic-content');
 var createShardContent = document.getElementById('create-shard-content');
@@ -522,7 +516,7 @@ modeOptions.forEach(function (option) {
 function escapeHtml(text) {
     var div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML;
+    return div.innerHTML.replace(/"/g, '&quot;');
 }
 
 var langSelectEl = document.getElementById('lang-select');
@@ -617,13 +611,17 @@ function setRuntimeWarning(messageHtml) {
 
 function checkRuntimeSupport() {
     var missing = [];
+    var webCrypto = window.crypto;
+    var subtle = webCrypto && webCrypto.subtle;
     if (typeof TextEncoder === 'undefined' || typeof TextDecoder === 'undefined') missing.push('TextEncoder/TextDecoder');
-    if (!window.crypto || typeof crypto.getRandomValues !== 'function') missing.push('crypto.getRandomValues');
-    if (!window.crypto || !crypto.subtle || typeof crypto.subtle.digest !== 'function') missing.push('crypto.subtle.digest');
-    if (!window.crypto || !crypto.subtle || typeof crypto.subtle.importKey !== 'function') missing.push('crypto.subtle.importKey');
-    if (!window.crypto || !crypto.subtle || typeof crypto.subtle.deriveBits !== 'function') missing.push('crypto.subtle.deriveBits');
-    if (!window.crypto || !crypto.subtle || typeof crypto.subtle.encrypt !== 'function') missing.push('crypto.subtle.encrypt');
-    if (!window.crypto || !crypto.subtle || typeof crypto.subtle.decrypt !== 'function') missing.push('crypto.subtle.decrypt');
+    if (!webCrypto || typeof webCrypto.getRandomValues !== 'function') missing.push('crypto.getRandomValues');
+    if (!subtle) {
+        missing.push('crypto.subtle (all)');
+    } else {
+        ['digest', 'importKey', 'deriveBits', 'encrypt', 'decrypt'].forEach(function (method) {
+            if (typeof subtle[method] !== 'function') missing.push('crypto.subtle.' + method);
+        });
+    }
 
     if (missing.length === 0) {
         setRuntimeWarning('');
@@ -748,14 +746,6 @@ function replaceLocationHash(hashValue) {
     } else if (window.location.hash) {
         window.location.hash = '';
     }
-}
-
-function parseChallengeHashFromLink(link) {
-    var parsed = parseSolveHashFromLink(link);
-    if (parsed.type !== 'challenge') {
-        throw new Error(t('errors.solve.link_expected_challenge'));
-    }
-    return parsed.hashData;
 }
 
 function showShardLoadError(msg) {

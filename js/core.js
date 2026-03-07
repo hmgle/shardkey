@@ -108,18 +108,6 @@ function getRandomBytes(length) {
     return bytes;
 }
 
-async function sha256Bytes(data) {
-    var input;
-    if (typeof data === 'string') {
-        input = new TextEncoder().encode(data);
-    } else if (data instanceof Uint8Array) {
-        input = data;
-    } else {
-        input = new Uint8Array(data);
-    }
-    return new Uint8Array(await crypto.subtle.digest('SHA-256', input));
-}
-
 async function deriveKeyBytesPBKDF2(answer, saltBytes, options) {
     var kdf = options && options.kdf ? options.kdf : resolveDefaults(options);
     var normalized = normalizeAnswer(answer);
