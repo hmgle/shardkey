@@ -1,84 +1,237 @@
 # ShardKey
 
-[中文](README.zh-CN.md)
+[简体中文](README.zh-CN.md)
 
-ShardKey is a browser-only offline secret-sharing helper with two modes:
+> Share a secret, and recover it only when enough people — or enough right answers — come together.
 
-- `Classic Q&A`: define questions, answers, and a threshold; the secret unlocks only when enough answers are correct.
-- `Group Recovery`: split one secret into `N` shard links/JSON payloads, then recover it after collecting at least `K` shards.
+ShardKey is a browser-based threshold secret-sharing tool.
 
-Think of it as a shareable offline challenge format, not as a full-strength secret-sharing system.
+It runs entirely on the client side, works offline, and can be opened directly from `index.html` without a build step, backend service, or external dependency.
+
+## Why ShardKey
+
+Most secret-sharing tools are built for engineers, infrastructure, or formal key management.
+
+ShardKey is intentionally lighter:
+
+- Easy to open and use in a browser
+- Easy to share as a link or JSON file
+- Easy to explain to non-technical users
+- Easy to run offline, including via `file://`
+
+It is a good fit when you want a practical recovery flow, not a full-blown secrets platform.
+
+## Two Recovery Modes
+
+### `Classic Q&A`
+
+Protect a secret behind threshold-style questions.
+
+Example:
+
+- 5 questions in total
+- 3 correct answers required to unlock
+
+This mode is useful when the secret should be recoverable by someone who knows enough context, shared history, or private facts.
+
+### `Group Recovery`
+
+Split one secret into `N` shards and recover it with at least `K` shards.
+
+If `Classic Q&A` feels like passing a challenge, `Group Recovery` feels a bit like collecting enough Dragon Balls to summon the dragon: each shard is only a fragment, but once enough valid pieces are gathered, the secret comes back locally in the browser.
+
+This mode is useful when trust is distributed across multiple people, devices, or storage locations.
+
+## Highlights
+
+- Fully local execution in the browser
+- No external dependencies and no server required
+- Works with `file://` and static hosting
+- Self-contained links and JSON import/export
+- Multiple acceptable answers per question
+- Web Worker support for background processing
+- Built-in UI languages: English, 日本語, 简体中文, 繁體中文
 
 ## Quick Start
 
-Open `index.html` directly:
+Open the app directly:
 
 ```bash
 open index.html
 ```
 
-Or run a local static server:
+Or serve it as a static site:
 
 ```bash
 python3 -m http.server 8000
 # then visit http://localhost:8000
 ```
 
-## Language
+## Typical Use Cases
 
-- Use the top-right language selector to switch UI language (English / 日本語 / 简体中文 / 繁體中文).
-- You can also force the UI language via `?lang=` (supported: `en`, `ja`, `zh-CN`, `zh-TW`). The preference is saved in `localStorage`.
+- Sharing emergency contact details behind personal questions
+- Creating a lightweight break-glass recovery flow for a small team
+- Distributing one secret across several people or devices
+- Giving family or collaborators a recoverable secret without setting up backend infrastructure
+- Packaging a recovery workflow into a single static page
 
-## Validation
+## How It Works
 
-- Syntax check: `node --check js/core.js && node --check js/app.js && node --check js/i18n.js && node --check js/worker.js`
-- Smoke test: `node scripts/smoke.mjs`
+At a high level, ShardKey combines familiar cryptographic building blocks into a browser-friendly recovery flow.
 
-## Core Features
+### 1. The secret is encrypted locally
 
-1. Create a challenge: set a secret, questions/answers, and threshold.
-2. Share a challenge: copy a compact self-contained link or export JSON.
-3. Solve a challenge: import link/JSON, answer questions, and unlock.
+Your secret is encrypted in the browser with `AES-256-GCM` using the Web Crypto API.
 
-### Group recovery mode
+### 2. A random content key is split with threshold recovery
 
-1. Switch to `Group Recovery`.
-2. Enter the secret, total shard count `N`, and threshold `K`.
-3. Generate shard links and send each shard to a different person or storage location.
-4. On the recovery side, open any shard link or import shard JSON, then paste additional shards until at least `K` are present.
-5. Recover the secret locally in the browser.
+ShardKey generates a random key and splits it using `Shamir Secret Sharing` over `GF(256)`.
 
-### Multiple acceptable answers (per question)
+That means:
 
-When creating a challenge, each question can accept multiple valid answers: click “+ Add alternative answer” to add more answer inputs. Any one of them being correct counts (case-insensitive).
+- Fewer than the threshold shares are not enough
+- Any valid set of shares meeting the threshold can reconstruct the key
 
-Answer text can contain any characters (including `|`). The app no longer uses separators to split multiple answers.
+### 3. Each mode delivers shares differently
 
-## Technical Notes
+In `Classic Q&A`:
 
-- Pure HTML/CSS/JavaScript, no external dependencies
-- Current protocol version: `v4`
-- AES-256-GCM via Web Crypto API encrypts the shared secret
-- Shamir Secret Sharing over GF(256) splits a random content key into threshold shares
-- Answers are hardened via PBKDF2 (per-question salt, 120,000 iterations by default)
-- In `Classic Q&A`, each correct answer decrypts one encrypted Shamir share
-- Share links use a compact packed format to reduce URL length for forwarding and reposting
-- Fully local execution in browser (supports `file://`)
-- Uses a Web Worker when available to keep generation and recovery off the main UI thread
+- Each answer is normalized before use
+- The normalized answer is hardened with `PBKDF2-SHA-256`
+- Default cost is `120,000` iterations per answer
+- A correct answer unlocks one encrypted share
 
-## Security Notes
+In `Group Recovery`:
 
-- ShardKey is positioned as an offline Q&A unlocker, not as a replacement for audited cryptographic secret-sharing systems.
-- Shared data does not include the plaintext secret, correct answers, or answer hashes
-- The threshold logic is meant to gate offline unlocking, not to protect high-value secrets like a password vault
-- The secret is recovered only after enough shares reconstruct the AES key and the AEAD check succeeds
+- Each shard carries one threshold share
+- Recovery succeeds after enough valid shards are collected
 
-### Important limitations
+### 4. Recovery happens fully offline
 
-- Weak/guessable answers are vulnerable to offline dictionary attacks. PBKDF2 hardening slows guessing down, but does not prevent it; the default cost is 120,000 PBKDF2-SHA-256 iterations per answer.
-- Allowing multiple valid answers per question reduces the difficulty of “guessing any acceptable variant”; keep variants minimal and non-obvious.
-- For robustness, the app enforces practical limits (currently: secret ≤ 1024 bytes, questions ≤ 64, threshold ≤ 64, shard count ≤ 20, answer variants per question ≤ 16).
-- Large challenges may exceed practical URL/hash limits; when that happens, share or import JSON instead of a link.
-- Use a high-entropy secret if you need real confidentiality (e.g. append a random suffix), and prefer higher thresholds.
-- `Classic Q&A` still depends on answer strength. A weak answer can let an attacker recover one encrypted share offline.
-- If you need strong cryptographic protection, use an audited secret-sharing system or a password manager instead of relying on challenge questions alone.
+Once enough valid shares are available, the original key is reconstructed locally and used to decrypt the secret.
+
+Because the secret is wrapped with `AES-256-GCM`, recovery also depends on authenticated decryption succeeding: if the reconstructed key or recovery data is wrong, the integrity check fails and the secret is not accepted.
+
+No server is needed during generation or recovery.
+
+## Security Philosophy
+
+ShardKey is designed as a practical offline recovery tool, not as a replacement for audited secret-management systems.
+
+What it does well:
+
+- Keeps processing local to the browser
+- Avoids embedding the plaintext secret in shared payloads
+- Uses modern browser cryptography primitives
+- Supports threshold-based recovery without backend coordination
+
+What you should keep in mind:
+
+- Weak answers are still vulnerable to offline guessing
+- Q&A mode is only as strong as the answers people choose
+- High-value or long-term secrets are better handled by a password manager or audited secret-sharing tools
+- If a share link becomes too large for practical use, JSON export is the better choice
+
+## Practical Security Tips
+
+- Prefer strong secrets, especially for long-lived or high-impact use cases
+- If needed, append a random suffix to the secret to increase entropy
+- Prefer higher thresholds when recovery should require broader agreement
+- Keep alternative answers minimal and non-obvious, since every accepted variant slightly widens the guessing surface
+- Use JSON export when links become too large to share reliably
+
+## What ShardKey Is Not
+
+ShardKey is not:
+
+- A hosted secrets manager
+- A replacement for audited enterprise key custody
+- A guarantee against poor answer choices
+- A long-term vault for high-value secrets
+
+If you need strong operational controls, access logs, rotation workflows, or hardware-backed key protection, use a dedicated system.
+
+## Practical Limits
+
+Current built-in limits include:
+
+- Secret length: up to `1024` bytes
+- Questions: up to `64`
+- Threshold: up to `64`
+- Total shards: up to `20`
+- Answer variants per question: up to `16`
+
+## FAQ
+
+### Are answers case-sensitive?
+
+No. Answers are normalized before derivation, including case folding and whitespace cleanup, so simple formatting differences are less likely to break recovery.
+
+### Can one question have multiple valid answers?
+
+Yes. Each question can include multiple acceptable answers, and any one of them counts as correct.
+
+### Does the shared payload contain the plaintext secret?
+
+No. Shared links and JSON exports are designed to carry encrypted recovery data, not the plaintext secret itself, and they do not include the correct answers or answer hashes.
+
+### When should I use JSON instead of links?
+
+Use JSON when the shared data becomes too large for a practical URL, or when file-based sharing is easier for your workflow.
+
+### Can I run it without a server?
+
+Yes. ShardKey supports direct browser opening via `file://` as well as static hosting.
+
+## Language Support
+
+Use the top-right language menu to switch UI language.
+
+You can also force a language with `?lang=`:
+
+- `en`
+- `ja`
+- `zh-CN`
+- `zh-TW`
+
+The selected language is stored in `localStorage`.
+
+## Development
+
+ShardKey is a small static web app. There is no build pipeline for normal development.
+
+Project files:
+
+- `index.html` — app shell
+- `css/style.css` — UI styles
+- `js/core.js` — crypto and share/recovery core
+- `js/app.js` — browser UI logic
+- `js/i18n.js` — translations and language handling
+- `js/worker.js` — background worker
+- `scripts/smoke.mjs` — smoke tests
+
+Validation commands:
+
+```bash
+node --check js/core.js
+node --check js/app.js
+node --check js/i18n.js
+node --check js/worker.js
+node scripts/smoke.mjs
+```
+
+## Deployment
+
+Because the app is static, you can deploy it to any static hosting environment, or simply distribute the files directly.
+
+Examples:
+
+- GitHub Pages
+- Cloudflare Pages
+- Vercel static hosting
+- Internal static file servers
+- Local files shared inside an organization
+
+## License
+
+Released under the `MIT` License. See `LICENSE`.
