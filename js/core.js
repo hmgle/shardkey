@@ -83,7 +83,12 @@ function base64UrlToBytes(base64url, options) {
     while (base64.length % 4 !== 0) {
         base64 += '=';
     }
-    var binary = atob(base64);
+    var binary;
+    try {
+        binary = atob(base64);
+    } catch (e) {
+        fail(options, 'errors.base64url.invalid_field');
+    }
     var bytes = new Uint8Array(binary.length);
     for (var i = 0; i < binary.length; i++) {
         bytes[i] = binary.charCodeAt(i);

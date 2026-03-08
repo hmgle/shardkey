@@ -157,7 +157,8 @@ Current built-in limits include:
 
 - Secret length: up to `1024` bytes
 - Questions: up to `64`
-- Threshold: up to `64`
+- Threshold: from `2` up to `64`
+- Questions must be greater than or equal to the threshold
 - Total shards: up to `20`
 - Answer variants per question: up to `16`
 

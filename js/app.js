@@ -256,10 +256,15 @@ function challengeToFile(obj, filename) {
     var a = document.createElement('a');
     a.href = url;
     a.download = filename || 'challenge.json';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    try {
+        document.body.appendChild(a);
+        a.click();
+    } finally {
+        if (a.parentNode) {
+            a.parentNode.removeChild(a);
+        }
+        URL.revokeObjectURL(url);
+    }
 }
 
 function challengeFromFile(file) {
